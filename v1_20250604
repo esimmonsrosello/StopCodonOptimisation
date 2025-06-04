@@ -510,32 +510,125 @@ def save_output_to_excel(data_dict, filename, auto_open=True, chart_image_path=N
 # -------------------
 # Enhanced GUI Functions
 # -------------------
+
+option_names = {
+    1: "Standard Codon Optimization",
+    2: "CAI Weight Analysis (Original Sequence)",
+    3: "Balanced Optimization (+1 Stop Avoidance)",
+    4: "NC Stop Codon Optimization (Introduce +1 TAA/TAG)",
+    5: "JT Plus1 Stop Optimization (Introduce +1 TAATAA/TAGTAG)",
+    6: "+1 Frame Stop Codon Analysis (TAA, TAG, TGA)"
+}
+
+def ask_optimization_choice_dialog(parent):
+    dialog = tk.Toplevel(parent)
+    dialog.title("Choose Optimization Method")
+    dialog.transient(parent) # Make it behave like a child of parent
+    dialog.grab_set() # Make it modal
+
+    selected_choice_var = tk.IntVar(value=1)
+    result = {"choice": None} # Using a dictionary to pass value back
+
+    for val, name in sorted(option_names.items()):
+        rb = ttk.Radiobutton(dialog, text=name, variable=selected_choice_var, value=val)
+        rb.pack(anchor=tk.W, padx=20, pady=3)
+
+    button_frame = ttk.Frame(dialog)
+    button_frame.pack(pady=10)
+
+    def on_ok():
+        result["choice"] = selected_choice_var.get()
+        dialog.destroy()
+
+    def on_cancel():
+        result["choice"] = None
+        dialog.destroy()
+
+    ok_button = ttk.Button(button_frame, text="OK", command=on_ok)
+    ok_button.pack(side=tk.LEFT, padx=5)
+    cancel_button = ttk.Button(button_frame, text="Cancel", command=on_cancel)
+    cancel_button.pack(side=tk.LEFT, padx=5)
+
+    dialog.protocol("WM_DELETE_WINDOW", on_cancel) # Handle window close button
+
+    dialog.wait_window()
+    return result["choice"]
+
 def get_user_input(): # Full version
-    global logger, root
+    global logger, root, option_names # Added option_names to global if it's defined outside
     parent_dialog = root if root and root.winfo_exists() else tk.Toplevel()
     if parent_dialog is not root : parent_dialog.withdraw()
 
     while True:
-        seq_input = simpledialog.askstring("Input DNA Sequence", "Please enter your DNA sequence...", parent=parent_dialog)
-        if parent_dialog is not root and not parent_dialog.winfo_exists(): return None, None, None # Window closed
-        if seq_input is None: # User cancelled
-            if parent_dialog is not root: parent_dialog.destroy()
+        # Ensure parent_dialog is suitable for simpledialog or becomes the parent for the custom dialog
+        # If root exists and is visible, it can be the parent. Otherwise, a temporary Toplevel.
+        current_parent_for_dialog = parent_dialog if parent_dialog.winfo_exists() and parent_dialog.state() == 'normal' else root
+        if not current_parent_for_dialog or not current_parent_for_dialog.winfo_exists(): # Fallback if root also not usable
+             temp_parent = tk.Toplevel()
+             temp_parent.withdraw()
+             current_parent_for_dialog = temp_parent
+        else: # ensure parent_dialog (if it was a temp withdrawn window) is destroyed if not used by askstring
+             temp_parent = None
+
+
+        seq_input = simpledialog.askstring("Input DNA Sequence", "Please enter your DNA sequence...", parent=current_parent_for_dialog)
+
+        if temp_parent and temp_parent.winfo_exists(): # Clean up temporary parent if created
+            temp_parent.destroy()
+
+        if parent_dialog is not root and not parent_dialog.winfo_exists(): return None, None, None # Window closed earlier
+        if seq_input is None: # User cancelled input sequence dialog
+            if parent_dialog is not root and parent_dialog.winfo_exists(): parent_dialog.destroy()
             return None, None, None
         is_valid, clean_seq, error_msg = validate_dna_sequence(seq_input)
         if is_valid: break
-        else: messagebox.showerror("Input Error", error_msg, parent=parent_dialog)
-    
-    if parent_dialog is not root and parent_dialog.winfo_exists() : parent_dialog.destroy() # Clean up if temporary
+        else:
+            # Ensure a valid parent for messagebox if parent_dialog was destroyed or is withdrawn
+            msg_parent = root if root and root.winfo_exists() and root.state() == 'normal' else None
+            if not msg_parent and parent_dialog.winfo_exists() and parent_dialog.state() == 'normal':
+                msg_parent = parent_dialog
 
-    parent_dialog_choice = root if root and root.winfo_exists() else tk.Toplevel()
-    if parent_dialog_choice is not root : parent_dialog_choice.withdraw()
-    
-    choice = simpledialog.askinteger("Choose Optimization Method", "Select optimization method (1-6):...", minvalue=1, maxvalue=6, parent=parent_dialog_choice)
-    
-    if parent_dialog_choice is not root and not parent_dialog_choice.winfo_exists(): return None, None, None # Window closed
-    if parent_dialog_choice is not root: parent_dialog_choice.destroy()
+            # If parent_dialog was the temp one for askstring and now destroyed, we might need a new temp parent for messagebox
+            temp_msg_parent = None
+            if not msg_parent or not msg_parent.winfo_exists():
+                temp_msg_parent = tk.Toplevel()
+                temp_msg_parent.withdraw()
+                msg_parent = temp_msg_parent
 
-    if choice is None: return None, None, None
+            messagebox.showerror("Input Error", error_msg, parent=msg_parent)
+
+            if temp_msg_parent and temp_msg_parent.winfo_exists():
+                temp_msg_parent.destroy()
+
+    # Clean up the sequence input dialog's parent if it was temporary and still exists
+    if parent_dialog is not root and parent_dialog.winfo_exists() : parent_dialog.destroy()
+
+    # Now, call the custom dialog for optimization choice
+    # The parent for this dialog should be the main root window if available, or a new Toplevel if not.
+    parent_for_choice_dialog = root if root and root.winfo_exists() else tk.Toplevel()
+    # If root is not the parent (i.e., a new Toplevel was made), and it's not the main app window, it might need to be withdrawn
+    # However, ask_optimization_choice_dialog creates its own Toplevel, so parent_for_choice_dialog is its parent.
+    # If parent_for_choice_dialog is a new Toplevel, it should not be withdrawn if the custom dialog is transient to it.
+    # The custom dialog itself is a Toplevel, so it doesn't strictly need a withdrawn parent.
+    # Let's ensure 'parent_for_choice_dialog' is a valid window.
+    
+    if not parent_for_choice_dialog.winfo_exists(): # Should not happen if root exists or Toplevel() works
+        # This case implies tk system might be unstable, but attempt to recover for the dialog
+        parent_for_choice_dialog = tk.Toplevel()
+        # It's okay if this new Toplevel is visible, as the custom dialog will be transient to it.
+
+    choice = ask_optimization_choice_dialog(parent_for_choice_dialog)
+
+    # If parent_for_choice_dialog was specifically created for this dialog AND it's not the main root window,
+    # AND the custom dialog is now closed, we might consider destroying parent_for_choice_dialog.
+    # However, this is risky if 'root' was None initially.
+    # The original code destroyed 'parent_dialog_choice' if it wasn't root.
+    # Let's replicate that if parent_for_choice_dialog is not root and still exists.
+    if parent_for_choice_dialog is not root and parent_for_choice_dialog.winfo_exists():
+        parent_for_choice_dialog.destroy()
+
+    if choice is None: # User cancelled the choice dialog
+        return None, None, None
     try:
         protein_seq = translate_dna(clean_seq)
         logger.info(f"Input sequence: {len(clean_seq)} bp, Protein: {len(protein_seq)} aa")
@@ -558,8 +651,8 @@ def run_optimization(clean_seq, protein_seq, choice): # Full version
     try:
         if choice == 1:
             optimized = codon_optimize(protein_seq)
-            weights, _ = get_codon_weights_row(optimized)
-            data = {'Original_DNA': [clean_seq], 'Protein': [protein_seq], 'Optimized_DNA': [optimized], 'CAI_Weights': [','.join(f"{w:.4f}" for w in weights)]}
+            # weights, _ = get_codon_weights_row(optimized) # Removed as per instruction
+            data = {'Original_DNA': [clean_seq], 'Protein': [protein_seq], 'Optimized_DNA': [optimized]} # CAI_Weights removed
             filename_template_for_individual_save = "Codon_Optimized_Output.xlsx"; analysis_type_description = "Standard Codon Optimization"
         elif choice == 2:
             weights, codons_list = get_codon_weights_row(clean_seq)
@@ -567,18 +660,18 @@ def run_optimization(clean_seq, protein_seq, choice): # Full version
             filename_template_for_individual_save = "Original_Sequence_CAI_Analysis.xlsx"; analysis_type_description = "CAI Weight Analysis"
         elif choice == 3:
             balanced_seq = balanced_optimisation(clean_seq)
-            weights, _ = get_codon_weights_row(balanced_seq)
-            data = {'Original_DNA': [clean_seq], 'Protein': [protein_seq], 'Balanced_Optimized_DNA': [balanced_seq], 'CAI_Weights': [','.join(f"{w:.4f}" for w in weights)]}
+            # weights, _ = get_codon_weights_row(balanced_seq) # Removed as per instruction
+            data = {'Original_DNA': [clean_seq], 'Protein': [protein_seq], 'Balanced_Optimized_DNA': [balanced_seq]} # CAI_Weights removed
             filename_template_for_individual_save = "Balanced_Optimized_Output.xlsx"; analysis_type_description = "Balanced Optimization"
         elif choice == 4:
             nc_stop_seq = nc_stop_codon_optimisation(clean_seq)
-            weights, _ = get_codon_weights_row(nc_stop_seq)
-            data = {'Original_DNA': [clean_seq], 'Protein': [protein_seq], 'NC_Stop_Optimized_DNA': [nc_stop_seq], 'CAI_Weights': [','.join(f"{w:.4f}" for w in weights)]}
+            # weights, _ = get_codon_weights_row(nc_stop_seq) # Removed as per instruction
+            data = {'Original_DNA': [clean_seq], 'Protein': [protein_seq], 'NC_Stop_Optimized_DNA': [nc_stop_seq]} # CAI_Weights removed
             filename_template_for_individual_save = "NC_Stop_Optimized_Output.xlsx"; analysis_type_description = "NC Stop Codon Optimization"
         elif choice == 5:
             plus1_optimized = JT_Plus1_Stop_Optimized(clean_seq)
-            weights, _ = get_codon_weights_row(plus1_optimized)
-            data = {'Original_DNA': [clean_seq], 'Protein': [protein_seq], 'JT_Plus1_Optimized_DNA': [plus1_optimized], 'CAI_Weights': [','.join(f"{w:.4f}" for w in weights)]}
+            # weights, _ = get_codon_weights_row(plus1_optimized) # Removed as per instruction
+            data = {'Original_DNA': [clean_seq], 'Protein': [protein_seq], 'JT_Plus1_Optimized_DNA': [plus1_optimized]} # CAI_Weights removed
             filename_template_for_individual_save = "JT_Plus1_Optimized_Output.xlsx"; analysis_type_description = "JT Plus1 Stop Optimization"
         elif choice == 6:
             plus1_stop_counts = number_of_plus1_stops(clean_seq)
@@ -623,6 +716,7 @@ def run_optimization(clean_seq, protein_seq, choice): # Full version
 
                 if sum(valid_chart_sizes) > 0: # Only generate chart if there's data
                     try:
+                        plt.style.use('ggplot')
                         fig, ax = plt.subplots()
                         ax.pie(valid_chart_sizes, labels=valid_chart_labels, autopct='%1.1f%%', startangle=90)
                         ax.axis('equal')  # Equal aspect ratio ensures that pie is drawn as a circle.
@@ -696,20 +790,20 @@ def process_batch_sequences(): # Full version
                 result_data = {'Sequence_Name': name, 'Original_DNA': clean_seq, 'Protein': protein_seq}
                 # Logic from Step 1 for choice handling
                 if choice == 1:
-                    optimized_seq = codon_optimize(protein_seq); weights, _ = get_codon_weights_row(optimized_seq)
-                    result_data.update({'Optimized_DNA': optimized_seq, 'CAI_Weights': ','.join(f"{w:.4f}" for w in weights), 'Analysis_Type': 'Standard Codon Optimization'})
+                    optimized_seq = codon_optimize(protein_seq) # Removed: weights, _ = get_codon_weights_row(optimized_seq)
+                    result_data.update({'Optimized_DNA': optimized_seq, 'Analysis_Type': 'Standard Codon Optimization'}) # Removed CAI_Weights
                 elif choice == 2: 
                     weights, _ = get_codon_weights_row(clean_seq)
                     result_data.update({'Optimized_DNA': clean_seq, 'CAI_Weights': ','.join(f"{w:.4f}" for w in weights), 'Analysis_Type': 'CAI Weight Analysis (Original)'})
                 elif choice == 3:
-                    optimized_seq = balanced_optimisation(clean_seq); weights, _ = get_codon_weights_row(optimized_seq)
-                    result_data.update({'Optimized_DNA': optimized_seq, 'CAI_Weights': ','.join(f"{w:.4f}" for w in weights), 'Analysis_Type': 'Balanced Optimization'})
+                    optimized_seq = balanced_optimisation(clean_seq) # Removed: weights, _ = get_codon_weights_row(optimized_seq)
+                    result_data.update({'Optimized_DNA': optimized_seq, 'Analysis_Type': 'Balanced Optimization'}) # Removed CAI_Weights
                 elif choice == 4:
-                    optimized_seq = nc_stop_codon_optimisation(clean_seq); weights, _ = get_codon_weights_row(optimized_seq)
-                    result_data.update({'Optimized_DNA': optimized_seq, 'CAI_Weights': ','.join(f"{w:.4f}" for w in weights), 'Analysis_Type': 'NC Stop Codon Optimization'})
+                    optimized_seq = nc_stop_codon_optimisation(clean_seq) # Removed: weights, _ = get_codon_weights_row(optimized_seq)
+                    result_data.update({'Optimized_DNA': optimized_seq, 'Analysis_Type': 'NC Stop Codon Optimization'}) # Removed CAI_Weights
                 elif choice == 5:
-                    optimized_seq = JT_Plus1_Stop_Optimized(clean_seq); weights, _ = get_codon_weights_row(optimized_seq)
-                    result_data.update({'Optimized_DNA': optimized_seq, 'CAI_Weights': ','.join(f"{w:.4f}" for w in weights), 'Analysis_Type': 'JT Plus1 Stop Optimization'})
+                    optimized_seq = JT_Plus1_Stop_Optimized(clean_seq) # Removed: weights, _ = get_codon_weights_row(optimized_seq)
+                    result_data.update({'Optimized_DNA': optimized_seq, 'Analysis_Type': 'JT Plus1 Stop Optimization'}) # Removed CAI_Weights
                 elif choice == 6: 
                     stop_counts = number_of_plus1_stops(clean_seq)
                     result_data.update({
