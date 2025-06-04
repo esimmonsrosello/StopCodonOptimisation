@@ -915,7 +915,7 @@ def show_settings(): # Full version
     ttk.Button(paths_frame, text="Browse...", command=browse_output_dir).pack(anchor=tk.W, pady=2)
     
     bias_weight_var = tk.DoubleVar(value=config.get("bias_weight", BIAS_WEIGHT_DEFAULT))
-ttk.Label(algo_frame, text="Bias weight for balanced optimization:").pack(anchor=tk.W, pady=5)
+    ttk.Label(algo_frame, text="Bias weight for balanced optimization:").pack(anchor=tk.W, pady=5)
 
 # Add validation for numbers only
 def validate_number(value):
