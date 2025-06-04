@@ -917,21 +917,12 @@ def show_settings(): # Full version
     bias_weight_var = tk.DoubleVar(value=config.get("bias_weight", BIAS_WEIGHT_DEFAULT))
     ttk.Label(algo_frame, text="Bias weight for balanced optimization:").pack(anchor=tk.W, pady=5)
 
-# Add validation for numbers only
-def validate_number(value):
-    try:
-        if value == "" or value == "-" or value == ".":
-            return True
-        float(value)
-        return True
-    except ValueError:
-        return False
-
-vcmd = (algo_frame.register(validate_number), '%P')
-ttk.Entry(algo_frame, textvariable=bias_weight_var, width=10, validate='key', validatecommand=vcmd).pack(fill=tk.X, pady=2)
-current_bias_label = ttk.Label(algo_frame, text=f"{bias_weight_var.get():.2f}"); current_bias_label.pack(anchor=tk.W)
-def update_bias_label(val): current_bias_label.config(text=f"{float(val):.2f}")
-bias_weight_var.trace_add("write", lambda n,i,m,v=bias_weight_var: update_bias_label(v.get())); update_bias_label(bias_weight_var.get())
+    bias_weight_var = tk.DoubleVar(value=config.get("bias_weight", BIAS_WEIGHT_DEFAULT))
+    ttk.Label(algo_frame, text="Bias weight for balanced optimization:").pack(anchor=tk.W, pady=5)
+    ttk.Scale(algoframe, from=0.1, to=5.0, variable=bias_weight_var, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=2)
+    current_bias_label = ttk.Label(algo_frame, text=f"{bias_weight_var.get():.2f}"); current_bias_label.pack(anchor=tk.W)
+    def update_bias_label(val): current_bias_label.config(text=f"{float(val):.2f}")
+    bias_weight_var.trace_add("write", lambda n,i,m,v=bias_weight_var: update_bias_label(v.get())); update_bias_label(bias_weight_var.get())
 
 button_frame = ttk.Frame(settings_window); button_frame.pack(fill=tk.X, padx=10, pady=10)
 def save_settings_action(): 
