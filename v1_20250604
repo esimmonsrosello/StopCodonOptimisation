@@ -12,6 +12,7 @@ import json
 import matplotlib.pyplot as plt
 from openpyxl import load_workbook
 from openpyxl.drawing.image import Image
+import math # Added for process_batch_sequences chart layout
 
 # -------------------
 # Configuration and Constants
@@ -25,6 +26,15 @@ DEFAULT_CONFIG = {
     "bias_weight": BIAS_WEIGHT_DEFAULT,
     "auto_open_files": True,
     "default_output_dir": "."
+}
+
+option_names = {
+    1: "Standard Codon Optimization",
+    2: "CAI Weight Analysis (Original Sequence)",
+    3: "Balanced Optimization (+1 Stop Avoidance)",
+    4: "NC Stop Codon Optimization (Introduce +1 TAA/TAG)",
+    5: "JT Plus1 Stop Optimization (Introduce +1 TAATAA/TAGTAG)",
+    6: "+1 Frame Stop Codon Analysis (TAA, TAG, TGA)"
 }
 
 logging.basicConfig(
@@ -67,8 +77,8 @@ config = load_config()
 # --- Globals for Step 4 ---
 accumulated_results_list = []
 accumulation_run_id_counter = 0
-combine_outputs_var = None 
-root = None 
+combine_outputs_var = None
+root = None
 
 # -------------------
 # Utility Functions
@@ -93,10 +103,10 @@ def open_file(filepath):
 def safe_exit(code=0):
     global root, logger # Added globals
     try:
-        if root and root.winfo_exists(): 
+        if root and root.winfo_exists():
             root.destroy()
         logger.info(f"Application exiting with code {code}")
-    except tk.TclError: 
+    except tk.TclError:
         logger.info("Root window already destroyed or not available.")
     except Exception as e:
         logger.error(f"Error during safe_exit: {e}")
@@ -126,13 +136,13 @@ def get_codon_file_path():
         for path in potential_paths:
             if os.path.exists(path): return path
     elif os.path.exists(codon_file): return codon_file
-    
+
     parent_window = root if root and root.winfo_exists() else tk.Toplevel()
     if parent_window is not root and hasattr(parent_window, 'withdraw'): parent_window.withdraw()
 
     messagebox.showwarning("Codon File Not Found", f"Could not find codon usage file: {codon_file}\nPlease select the file manually.", parent=parent_window)
     file_path = filedialog.askopenfilename(title="Select Human Codon Usage File", filetypes=[("Excel files", "*.xlsx"), ("All files", "*.*")], parent=parent_window)
-    
+
     if parent_window is not root and hasattr(parent_window, 'destroy'): parent_window.destroy()
 
     if file_path:
@@ -168,24 +178,24 @@ def load_codon_data():
         required_columns = ['triplet', 'amino_acid', 'fraction']
         missing_columns = [col for col in required_columns if col not in df.columns]
         if missing_columns: raise ValueError(f"Missing required columns: {missing_columns}")
-        
+
         df['triplet'] = df['triplet'].str.upper().str.strip()
         df['amino_acid'] = df['amino_acid'].str.upper().str.strip().replace({'*': 'X'})
         df = df.dropna(subset=['triplet', 'amino_acid', 'fraction'])
         logger.info(f"Successfully loaded {len(df)} codon entries")
-        
+
         genetic_code.clear(); genetic_code.update(df.set_index('triplet')['amino_acid'].to_dict())
         max_fraction = df.groupby('amino_acid')['fraction'].transform('max')
         df['weight'] = df['fraction'] / max_fraction
         codon_weights.clear(); codon_weights.update(df.set_index('triplet')['weight'].to_dict())
         preferred_codons.clear(); preferred_codons.update(df.sort_values('fraction', ascending=False).drop_duplicates('amino_acid').set_index('amino_acid')['triplet'].to_dict())
         human_codon_usage.clear(); human_codon_usage.update(df.set_index('triplet')['fraction'].to_dict())
-        
+
         aa_to_codons.clear()
         for codon_val, freq in human_codon_usage.items():
             aa = genetic_code.get(codon_val, None)
             if aa and aa != 'X': aa_to_codons[aa].append((codon_val, freq))
-        return df 
+        return df
     except FileNotFoundError:
         logger.error(f"Codon file not found: {codon_file}")
         parent_window = root if root and root.winfo_exists() else tk.Toplevel()
@@ -288,7 +298,7 @@ def balanced_optimisation(dna_seq, bias_weight_input=None):
         for i in range(0, len(dna_seq_upper) -2, 3):
             codon = dna_seq_upper[i:i+3]
             protein_str += genetic_code.get(codon, Seq(codon).translate()) # Fallback if local genetic_code is incomplete
-        
+
         optimised_seq = ""
         idx = 0 # Renamed i to idx
         while idx < len(dna_seq_upper) - 2:
@@ -309,7 +319,7 @@ def balanced_optimisation(dna_seq, bias_weight_input=None):
                             bonus = 0
                             if codon1_plus1 in PLUS1_STOP_CODONS and combined[2:5] in PLUS1_STOP_CODONS : bonus +=2 # check overlapping too
                             elif codon1_plus1 in PLUS1_STOP_CODONS : bonus +=1
-                            
+
                             score = (f1 * f2) + bias_weight * bonus # Consider normalizing f1,f2 or using log scores
                             candidates.append((score, c1, c2))
                 if candidates:
@@ -317,7 +327,7 @@ def balanced_optimisation(dna_seq, bias_weight_input=None):
                     optimised_seq += best1 + best2
                     idx += 6
                     continue
-            
+
             # Single codon substitution
             best_codon_val = current_codon
             # Initialize best_score with the score of the current_codon
@@ -326,7 +336,7 @@ def balanced_optimisation(dna_seq, bias_weight_input=None):
                  if syn_c == current_codon:
                       current_codon_freq = freq_val
                       break
-            
+
             temp_seq_orig = optimised_seq + current_codon + dna_seq_upper[idx+3:]
             plus1_window_orig_start = len(optimised_seq) + 1 # Start of +1 frame codon corresponding to current_codon in temp_seq_orig
             bonus_orig = 0
@@ -334,28 +344,28 @@ def balanced_optimisation(dna_seq, bias_weight_input=None):
                 codon_plus1_orig = temp_seq_orig[plus1_window_orig_start : plus1_window_orig_start+3]
                 if codon_plus1_orig in PLUS1_STOP_CODONS: bonus_orig = bias_weight
             best_score = current_codon_freq + bonus_orig
-            
+
             for syn_codon, freq in aa_to_codons.get(aa, []):
                 temp_seq = optimised_seq + syn_codon + dna_seq_upper[idx+3:]
                 # The +1 codon starts at the second base of syn_codon
-                plus1_codon_start_in_temp = len(optimised_seq) + 1 
-                
+                plus1_codon_start_in_temp = len(optimised_seq) + 1
+
                 bonus_val = 0
                 if plus1_codon_start_in_temp < len(temp_seq) -2: # Ensure there are enough chars for a codon
                     codon_plus1 = temp_seq[plus1_codon_start_in_temp : plus1_codon_start_in_temp+3]
                     if codon_plus1 in PLUS1_STOP_CODONS:
                         bonus_val = bias_weight
-                
+
                 score = freq + bonus_val
                 if score > best_score:
                     best_score = score
                     best_codon_val = syn_codon
-            
+
             optimised_seq += best_codon_val
             idx += 3
 
         if idx < len(dna_seq_upper): optimised_seq += dna_seq_upper[idx:]
-        
+
         final_protein_str = ""
         for i in range(0, len(optimised_seq) -2, 3):
             codon = optimised_seq[i:i+3]
@@ -381,7 +391,7 @@ def nc_stop_codon_optimisation(dna_seq):
 
         synonymous_codons_local = defaultdict(list)
         for c, aa_val in genetic_code.items(): synonymous_codons_local[aa_val].append(c)
-        
+
         optimised_seq = ""
         idx = 0 # Renamed i to idx
         while idx < len(dna_seq_upper) - 2:
@@ -403,11 +413,11 @@ def nc_stop_codon_optimisation(dna_seq):
                         # Let's use the original check for simplicity of this step:
                         double_subs_orig_check = [(c1,c2) for c1 in synonymous_codons_local[aa] for c2 in synonymous_codons_local[aa2] if (c1+c2)[1:7] in {"TAATAA", "TAGTAG"}]
                         if double_subs_orig_check:
-                            best_c1, best_c2 = double_subs_orig_check[0] 
+                            best_c1, best_c2 = double_subs_orig_check[0]
                             optimised_seq += best_c1 + best_c2
                             idx += 6
                             continue
-            
+
             best_codon_val = codon_val
             # For single codon, check if any synonym creates TAA or TAG in +1 frame
             # The +1 codon is formed by last 2 bases of current codon and 1st of next
@@ -417,7 +427,7 @@ def nc_stop_codon_optimisation(dna_seq):
                     plus1_codon = syn_c[1:3] + next_actual_codon[0:1]
                     if plus1_codon in {"TAA", "TAG"}:
                         best_codon_val = syn_c
-                        break 
+                        break
             optimised_seq += best_codon_val
             idx += 3
 
@@ -456,7 +466,7 @@ def JT_Plus1_Stop_Optimized(seq_input):
                         if not syn2.startswith(('A', 'G')): continue
                         for syn3 in synonymous_codons.get(aa3,[]):
                             if not syn3.startswith(('A', 'G')): continue
-                            motif_check = syn1[1:] + syn2 + syn3[:1] 
+                            motif_check = syn1[1:] + syn2 + syn3[:1]
                             if motif_check in PLUS1_STOP_MOTIFS:
                                 out_seq += syn1 + syn2 + syn3
                                 idx += 9
@@ -473,9 +483,9 @@ def JT_Plus1_Stop_Optimized(seq_input):
         raise
 
 # -------------------
-# Output Functions (Modified for Step 4)
+# Output Functions
 # -------------------
-def save_output_to_excel(data_dict, filename, auto_open=True, chart_image_path=None):
+def save_output_to_excel(data_dict, filename, auto_open=True): # Step 2a: Signature changed
     global logger, config, root
     try:
         output_dir = config.get("default_output_dir", ".")
@@ -485,19 +495,18 @@ def save_output_to_excel(data_dict, filename, auto_open=True, chart_image_path=N
         df.to_excel(full_path, index=False)
         logger.info(f"Results saved to {full_path}")
 
-        if chart_image_path and os.path.exists(chart_image_path):
-            try:
-                wb = load_workbook(full_path)
-                ws = wb.active
-                img = Image(chart_image_path)
-                # Attempt to anchor below data, adjust if needed
-                # Max_row might not be enough if data is very wide, consider a fixed cell like 'A20' or more dynamic
-                img.anchor = ws.cell(row=ws.max_row + 2, column=1).coordinate 
-                ws.add_image(img)
-                wb.save(full_path)
-                logger.info(f'Chart {chart_image_path} embedded into {full_path}')
-            except Exception as chart_e:
-                logger.error(f'Failed to embed chart {chart_image_path}: {chart_e}')
+        # Step 2b: Removed chart embedding block
+        # if chart_image_path and os.path.exists(chart_image_path):
+        #     try:
+        #         wb = load_workbook(full_path)
+        #         ws = wb.active
+        #         img = Image(chart_image_path)
+        #         img.anchor = ws.cell(row=ws.max_row + 2, column=1).coordinate
+        #         ws.add_image(img)
+        #         wb.save(full_path)
+        #         logger.info(f'Chart {chart_image_path} embedded into {full_path}')
+        #     except Exception as chart_e:
+        #         logger.error(f'Failed to embed chart {chart_image_path}: {chart_e}')
 
         if auto_open and config.get("auto_open_files", True): open_file(full_path)
         return full_path
@@ -510,24 +519,21 @@ def save_output_to_excel(data_dict, filename, auto_open=True, chart_image_path=N
 # -------------------
 # Enhanced GUI Functions
 # -------------------
-
-option_names = {
-    1: "Standard Codon Optimization",
-    2: "CAI Weight Analysis (Original Sequence)",
-    3: "Balanced Optimization (+1 Stop Avoidance)",
-    4: "NC Stop Codon Optimization (Introduce +1 TAA/TAG)",
-    5: "JT Plus1 Stop Optimization (Introduce +1 TAATAA/TAGTAG)",
-    6: "+1 Frame Stop Codon Analysis (TAA, TAG, TGA)"
-}
-
 def ask_optimization_choice_dialog(parent):
     dialog = tk.Toplevel(parent)
     dialog.title("Choose Optimization Method")
-    dialog.transient(parent) # Make it behave like a child of parent
+    dialog.transient(parent)
     dialog.grab_set() # Make it modal
 
     selected_choice_var = tk.IntVar(value=1)
-    result = {"choice": None} # Using a dictionary to pass value back
+    result = {"choice": None} 
+
+    if 'option_names' not in globals():
+        globals()['option_names'] = {
+            1: "Standard Codon Optimization", 2: "CAI Weight Analysis", 
+            3: "Balanced Optimization", 4: "NC Stop Codon Optimization",
+            5: "JT Plus1 Stop Optimization", 6: "+1 Frame Stop Codon Analysis" 
+        }
 
     for val, name in sorted(option_names.items()):
         rb = ttk.Radiobutton(dialog, text=name, variable=selected_choice_var, value=val)
@@ -541,7 +547,7 @@ def ask_optimization_choice_dialog(parent):
         dialog.destroy()
 
     def on_cancel():
-        result["choice"] = None
+        result["choice"] = None 
         dialog.destroy()
 
     ok_button = ttk.Button(button_frame, text="OK", command=on_ok)
@@ -549,86 +555,60 @@ def ask_optimization_choice_dialog(parent):
     cancel_button = ttk.Button(button_frame, text="Cancel", command=on_cancel)
     cancel_button.pack(side=tk.LEFT, padx=5)
 
-    dialog.protocol("WM_DELETE_WINDOW", on_cancel) # Handle window close button
+    dialog.protocol("WM_DELETE_WINDOW", on_cancel) 
+    
+    dialog.update_idletasks()
+    try:
+        parent_x = parent.winfo_x()
+        parent_y = parent.winfo_y()
+        parent_width = parent.winfo_width()
+        parent_height = parent.winfo_height()
+        dialog_width = dialog.winfo_width()
+        dialog_height = dialog.winfo_height()
+        
+        if parent_width == 1 and parent_height == 1: 
+            parent_width = parent.winfo_screenwidth()
+            parent_height = parent.winfo_screenheight()
+            parent_x = 0
+            parent_y = 0
+
+        x = parent_x + (parent_width // 2) - (dialog_width // 2)
+        y = parent_y + (parent_height // 2) - (dialog_height // 2)
+        dialog.geometry(f'+{x}+{y}')
+    except tk.TclError: 
+        dialog.geometry(f'+{parent.winfo_screenwidth()//2 - dialog.winfo_reqwidth()//2}+{parent.winfo_screenheight()//2 - dialog.winfo_reqheight()//2}')
 
     dialog.wait_window()
-    return result["choice"]
+    return result
 
 def get_user_input(): # Full version
-    global logger, root, option_names # Added option_names to global if it's defined outside
+    global logger, root
     parent_dialog = root if root and root.winfo_exists() else tk.Toplevel()
     if parent_dialog is not root : parent_dialog.withdraw()
 
     while True:
-        # Ensure parent_dialog is suitable for simpledialog or becomes the parent for the custom dialog
-        # If root exists and is visible, it can be the parent. Otherwise, a temporary Toplevel.
-        current_parent_for_dialog = parent_dialog if parent_dialog.winfo_exists() and parent_dialog.state() == 'normal' else root
-        if not current_parent_for_dialog or not current_parent_for_dialog.winfo_exists(): # Fallback if root also not usable
-             temp_parent = tk.Toplevel()
-             temp_parent.withdraw()
-             current_parent_for_dialog = temp_parent
-        else: # ensure parent_dialog (if it was a temp withdrawn window) is destroyed if not used by askstring
-             temp_parent = None
-
-
-        seq_input = simpledialog.askstring("Input DNA Sequence", "Please enter your DNA sequence...", parent=current_parent_for_dialog)
-
-        if temp_parent and temp_parent.winfo_exists(): # Clean up temporary parent if created
-            temp_parent.destroy()
-
-        if parent_dialog is not root and not parent_dialog.winfo_exists(): return None, None, None # Window closed earlier
-        if seq_input is None: # User cancelled input sequence dialog
-            if parent_dialog is not root and parent_dialog.winfo_exists(): parent_dialog.destroy()
+        seq_input = simpledialog.askstring("Input DNA Sequence", "Please enter your DNA sequence...", parent=parent_dialog)
+        if parent_dialog is not root and not parent_dialog.winfo_exists(): return None, None, None 
+        if seq_input is None: 
+            if parent_dialog is not root: parent_dialog.destroy()
             return None, None, None
         is_valid, clean_seq, error_msg = validate_dna_sequence(seq_input)
         if is_valid: break
-        else:
-            # Ensure a valid parent for messagebox if parent_dialog was destroyed or is withdrawn
-            msg_parent = root if root and root.winfo_exists() and root.state() == 'normal' else None
-            if not msg_parent and parent_dialog.winfo_exists() and parent_dialog.state() == 'normal':
-                msg_parent = parent_dialog
+        else: messagebox.showerror("Input Error", error_msg, parent=parent_dialog)
 
-            # If parent_dialog was the temp one for askstring and now destroyed, we might need a new temp parent for messagebox
-            temp_msg_parent = None
-            if not msg_parent or not msg_parent.winfo_exists():
-                temp_msg_parent = tk.Toplevel()
-                temp_msg_parent.withdraw()
-                msg_parent = temp_msg_parent
-
-            messagebox.showerror("Input Error", error_msg, parent=msg_parent)
-
-            if temp_msg_parent and temp_msg_parent.winfo_exists():
-                temp_msg_parent.destroy()
-
-    # Clean up the sequence input dialog's parent if it was temporary and still exists
     if parent_dialog is not root and parent_dialog.winfo_exists() : parent_dialog.destroy()
 
-    # Now, call the custom dialog for optimization choice
-    # The parent for this dialog should be the main root window if available, or a new Toplevel if not.
     parent_for_choice_dialog = root if root and root.winfo_exists() else tk.Toplevel()
-    # If root is not the parent (i.e., a new Toplevel was made), and it's not the main app window, it might need to be withdrawn
-    # However, ask_optimization_choice_dialog creates its own Toplevel, so parent_for_choice_dialog is its parent.
-    # If parent_for_choice_dialog is a new Toplevel, it should not be withdrawn if the custom dialog is transient to it.
-    # The custom dialog itself is a Toplevel, so it doesn't strictly need a withdrawn parent.
-    # Let's ensure 'parent_for_choice_dialog' is a valid window.
-    
-    if not parent_for_choice_dialog.winfo_exists(): # Should not happen if root exists or Toplevel() works
-        # This case implies tk system might be unstable, but attempt to recover for the dialog
+    if not parent_for_choice_dialog.winfo_exists():
         parent_for_choice_dialog = tk.Toplevel()
-        # It's okay if this new Toplevel is visible, as the custom dialog will be transient to it.
 
-    choice = ask_optimization_choice_dialog(parent_for_choice_dialog)
+    choice_data = ask_optimization_choice_dialog(parent_for_choice_dialog)
+    choice = choice_data["choice"] if choice_data else None 
 
-    # If parent_for_choice_dialog was specifically created for this dialog AND it's not the main root window,
-    # AND the custom dialog is now closed, we might consider destroying parent_for_choice_dialog.
-    # However, this is risky if 'root' was None initially.
-    # The original code destroyed 'parent_dialog_choice' if it wasn't root.
-    # Let's replicate that if parent_for_choice_dialog is not root and still exists.
     if parent_for_choice_dialog is not root and parent_for_choice_dialog.winfo_exists():
         parent_for_choice_dialog.destroy()
 
-    if choice is None: # User cancelled the choice dialog
-        return None, None, None
+    if choice is None: return None, None, None
     try:
         protein_seq = translate_dna(clean_seq)
         logger.info(f"Input sequence: {len(clean_seq)} bp, Protein: {len(protein_seq)} aa")
@@ -647,12 +627,12 @@ def run_optimization(clean_seq, protein_seq, choice): # Full version
     data = {}
     analysis_type_description = ""
     parent_window = root if root and root.winfo_exists() else None
-    
+
     try:
         if choice == 1:
             optimized = codon_optimize(protein_seq)
-            # weights, _ = get_codon_weights_row(optimized) # Removed as per instruction
-            data = {'Original_DNA': [clean_seq], 'Protein': [protein_seq], 'Optimized_DNA': [optimized]} # CAI_Weights removed
+            weights, _ = get_codon_weights_row(optimized)
+            data = {'Original_DNA': [clean_seq], 'Protein': [protein_seq], 'Optimized_DNA': [optimized], 'CAI_Weights': [','.join(f"{w:.4f}" for w in weights)]}
             filename_template_for_individual_save = "Codon_Optimized_Output.xlsx"; analysis_type_description = "Standard Codon Optimization"
         elif choice == 2:
             weights, codons_list = get_codon_weights_row(clean_seq)
@@ -660,18 +640,18 @@ def run_optimization(clean_seq, protein_seq, choice): # Full version
             filename_template_for_individual_save = "Original_Sequence_CAI_Analysis.xlsx"; analysis_type_description = "CAI Weight Analysis"
         elif choice == 3:
             balanced_seq = balanced_optimisation(clean_seq)
-            # weights, _ = get_codon_weights_row(balanced_seq) # Removed as per instruction
-            data = {'Original_DNA': [clean_seq], 'Protein': [protein_seq], 'Balanced_Optimized_DNA': [balanced_seq]} # CAI_Weights removed
+            weights, _ = get_codon_weights_row(balanced_seq)
+            data = {'Original_DNA': [clean_seq], 'Protein': [protein_seq], 'Balanced_Optimized_DNA': [balanced_seq], 'CAI_Weights': [','.join(f"{w:.4f}" for w in weights)]}
             filename_template_for_individual_save = "Balanced_Optimized_Output.xlsx"; analysis_type_description = "Balanced Optimization"
         elif choice == 4:
             nc_stop_seq = nc_stop_codon_optimisation(clean_seq)
-            # weights, _ = get_codon_weights_row(nc_stop_seq) # Removed as per instruction
-            data = {'Original_DNA': [clean_seq], 'Protein': [protein_seq], 'NC_Stop_Optimized_DNA': [nc_stop_seq]} # CAI_Weights removed
+            weights, _ = get_codon_weights_row(nc_stop_seq)
+            data = {'Original_DNA': [clean_seq], 'Protein': [protein_seq], 'NC_Stop_Optimized_DNA': [nc_stop_seq], 'CAI_Weights': [','.join(f"{w:.4f}" for w in weights)]}
             filename_template_for_individual_save = "NC_Stop_Optimized_Output.xlsx"; analysis_type_description = "NC Stop Codon Optimization"
         elif choice == 5:
             plus1_optimized = JT_Plus1_Stop_Optimized(clean_seq)
-            # weights, _ = get_codon_weights_row(plus1_optimized) # Removed as per instruction
-            data = {'Original_DNA': [clean_seq], 'Protein': [protein_seq], 'JT_Plus1_Optimized_DNA': [plus1_optimized]} # CAI_Weights removed
+            weights, _ = get_codon_weights_row(plus1_optimized)
+            data = {'Original_DNA': [clean_seq], 'Protein': [protein_seq], 'JT_Plus1_Optimized_DNA': [plus1_optimized], 'CAI_Weights': [','.join(f"{w:.4f}" for w in weights)]}
             filename_template_for_individual_save = "JT_Plus1_Optimized_Output.xlsx"; analysis_type_description = "JT Plus1 Stop Optimization"
         elif choice == 6:
             plus1_stop_counts = number_of_plus1_stops(clean_seq)
@@ -702,47 +682,46 @@ def run_optimization(clean_seq, protein_seq, choice): # Full version
         else:
             if not filename_template_for_individual_save:
                 logger.error("Filename template not set."); messagebox.showerror("Internal Error", "Filename template not set.", parent=parent_window); return
-            
-            chart_file_path = None # Initialize chart_file_path for this 'else' block
+
+            chart_file_path = None 
             if choice == 6:
-                # Extract counts for TAA, TAG, TGA from the 'data' dictionary
                 counts_for_chart = dict(zip(data.get('Stop_Codon_Type', []), data.get('Count_in_Plus1_Frame', [])))
                 chart_labels = ['TAA', 'TAG', 'TGA']
                 chart_sizes = [counts_for_chart.get('TAA', 0), counts_for_chart.get('TAG', 0), counts_for_chart.get('TGA', 0)]
-                
-                # Filter out zero-count entries for a cleaner pie chart
                 valid_chart_labels = [label for i, label in enumerate(chart_labels) if chart_sizes[i] > 0]
                 valid_chart_sizes = [size for size in chart_sizes if size > 0]
 
-                if sum(valid_chart_sizes) > 0: # Only generate chart if there's data
+                if sum(valid_chart_sizes) > 0: 
                     try:
-                        plt.style.use('ggplot')
+                        plt.style.use('ggplot') # Ensure ggplot style
                         fig, ax = plt.subplots()
                         ax.pie(valid_chart_sizes, labels=valid_chart_labels, autopct='%1.1f%%', startangle=90)
-                        ax.axis('equal')  # Equal aspect ratio ensures that pie is drawn as a circle.
-                        plt.title('Distribution of +1 Stop Codons (TAA, TAG, TGA)') # Add a title
-                        chart_file_path = 'temp_plus1_pie.png' # Define temp image path
+                        ax.axis('equal') 
+                        plt.title('Distribution of +1 Stop Codons (TAA, TAG, TGA)') 
+                        chart_file_path = 'single_plus1_stop_distribution.png' # Step 3.a.i
                         plt.savefig(chart_file_path)
-                        plt.close(fig) # Close the figure to free memory
+                        plt.close(fig) 
                         logger.info(f"Chart for choice 6 generated: {chart_file_path}")
                     except Exception as e_chart_gen:
                         logger.error(f"Chart generation failed for choice 6: {e_chart_gen}")
-                        chart_file_path = None # Ensure path is None if generation fails
+                        chart_file_path = None 
                 else:
                     logger.info("No +1 stop codons to chart for choice 6.")
                     chart_file_path = None
             
-            output_filename = save_output_to_excel(data, filename_template_for_individual_save, chart_image_path=(chart_file_path if choice == 6 else None))
-            
-            # Cleanup logic will be added after this 'if output_filename:' block in a subsequent step
+            # Step 3.a.iii: Call to save_output_to_excel updated
+            output_filename = save_output_to_excel(data, filename_template_for_individual_save)
+
             if output_filename: messagebox.showinfo("Complete", f"Operation completed.\nSaved to: {output_filename}", parent=parent_window)
-            
-            if chart_file_path and os.path.exists(chart_file_path): # Cleanup chart
-                try:
-                    os.remove(chart_file_path)
-                    logger.info(f"Temporary chart file {chart_file_path} removed.")
-                except Exception as e_remove:
-                    logger.error(f"Failed to remove temporary chart file {chart_file_path}: {e_remove}")
+
+            # Step 3.a.ii: os.remove block for chart_file_path commented out
+            # if chart_file_path and os.path.exists(chart_file_path): 
+            #     try:
+            #         # os.remove(chart_file_path) 
+            #         # logger.info(f"Temporary chart file {chart_file_path} removed.")
+            #     except Exception as e_remove:
+            #         # logger.error(f"Failed to remove temporary chart file {chart_file_path}: {e_remove}")
+            pass # Keep the block structure if preferred, or remove fully
     except Exception as e:
         logger.error(f"Error during optimization choice {choice}: {e}", exc_info=True)
         messagebox.showerror("Optimization Error", f"An error occurred: {e}", parent=parent_window)
@@ -771,15 +750,21 @@ def process_batch_sequences(): # Full version
         else:
             lines = [line.strip() for line in content.splitlines() if line.strip()]
             for i, line in enumerate(lines): sequences.append((f"Sequence_{i+1}", line.upper()))
-        
+
         if not sequences: messagebox.showwarning("No Sequences", "No valid sequences found.", parent=parent_window); return
-        
-        dialog_parent_choice = tk.Toplevel(parent_window) if parent_window else tk.Toplevel()
-        dialog_parent_choice.withdraw()
-        choice = simpledialog.askinteger("Batch Processing", f"Found {len(sequences)} sequences.\nChoose method (1-6):", minvalue=1, maxvalue=6, parent=dialog_parent_choice)
-        dialog_parent_choice.destroy()
+
+        parent_for_batch_choice_dialog = parent_window if parent_window and parent_window.winfo_exists() else tk.Toplevel()
+        if not parent_for_batch_choice_dialog.winfo_exists(): 
+            parent_for_batch_choice_dialog = tk.Toplevel()
+
+        choice_data = ask_optimization_choice_dialog(parent_for_batch_choice_dialog)
+        choice = choice_data["choice"] if choice_data else None 
+
+        if parent_for_batch_choice_dialog is not root and parent_for_batch_choice_dialog.winfo_exists():
+            parent_for_batch_choice_dialog.destroy()
+            
         if choice is None: return
-        
+
         results = []
         for name, seq_val in sequences:
             try:
@@ -788,23 +773,22 @@ def process_batch_sequences(): # Full version
                     logger.warning(f"Skipping invalid: {name}: {error_msg}"); results.append({'Sequence_Name': name, 'Error': error_msg}); continue
                 protein_seq = translate_dna(clean_seq)
                 result_data = {'Sequence_Name': name, 'Original_DNA': clean_seq, 'Protein': protein_seq}
-                # Logic from Step 1 for choice handling
                 if choice == 1:
-                    optimized_seq = codon_optimize(protein_seq) # Removed: weights, _ = get_codon_weights_row(optimized_seq)
-                    result_data.update({'Optimized_DNA': optimized_seq, 'Analysis_Type': 'Standard Codon Optimization'}) # Removed CAI_Weights
-                elif choice == 2: 
+                    optimized_seq = codon_optimize(protein_seq); weights, _ = get_codon_weights_row(optimized_seq)
+                    result_data.update({'Optimized_DNA': optimized_seq, 'CAI_Weights': ','.join(f"{w:.4f}" for w in weights), 'Analysis_Type': 'Standard Codon Optimization'})
+                elif choice == 2:
                     weights, _ = get_codon_weights_row(clean_seq)
                     result_data.update({'Optimized_DNA': clean_seq, 'CAI_Weights': ','.join(f"{w:.4f}" for w in weights), 'Analysis_Type': 'CAI Weight Analysis (Original)'})
                 elif choice == 3:
-                    optimized_seq = balanced_optimisation(clean_seq) # Removed: weights, _ = get_codon_weights_row(optimized_seq)
-                    result_data.update({'Optimized_DNA': optimized_seq, 'Analysis_Type': 'Balanced Optimization'}) # Removed CAI_Weights
+                    optimized_seq = balanced_optimisation(clean_seq); weights, _ = get_codon_weights_row(optimized_seq)
+                    result_data.update({'Optimized_DNA': optimized_seq, 'CAI_Weights': ','.join(f"{w:.4f}" for w in weights), 'Analysis_Type': 'Balanced Optimization'})
                 elif choice == 4:
-                    optimized_seq = nc_stop_codon_optimisation(clean_seq) # Removed: weights, _ = get_codon_weights_row(optimized_seq)
-                    result_data.update({'Optimized_DNA': optimized_seq, 'Analysis_Type': 'NC Stop Codon Optimization'}) # Removed CAI_Weights
+                    optimized_seq = nc_stop_codon_optimisation(clean_seq); weights, _ = get_codon_weights_row(optimized_seq)
+                    result_data.update({'Optimized_DNA': optimized_seq, 'CAI_Weights': ','.join(f"{w:.4f}" for w in weights), 'Analysis_Type': 'NC Stop Codon Optimization'})
                 elif choice == 5:
-                    optimized_seq = JT_Plus1_Stop_Optimized(clean_seq) # Removed: weights, _ = get_codon_weights_row(optimized_seq)
-                    result_data.update({'Optimized_DNA': optimized_seq, 'Analysis_Type': 'JT Plus1 Stop Optimization'}) # Removed CAI_Weights
-                elif choice == 6: 
+                    optimized_seq = JT_Plus1_Stop_Optimized(clean_seq); weights, _ = get_codon_weights_row(optimized_seq)
+                    result_data.update({'Optimized_DNA': optimized_seq, 'CAI_Weights': ','.join(f"{w:.4f}" for w in weights), 'Analysis_Type': 'JT Plus1 Stop Optimization'})
+                elif choice == 6:
                     stop_counts = number_of_plus1_stops(clean_seq)
                     result_data.update({
                         'Plus1_TAA_Count': stop_counts.get('TAA', 0),
@@ -818,69 +802,110 @@ def process_batch_sequences(): # Full version
                 results.append(result_data)
             except Exception as e:
                 logger.error(f"Error processing {name}: {e}", exc_info=True); results.append({'Sequence_Name': name, 'Error': str(e)})
-        
+
         if results:
             all_keys = set().union(*(d.keys() for d in results))
             standardized_results = [{key: d.get(key, 'N/A') for key in all_keys} for d in results]
             
-            batch_chart_path = None
-            if choice == 6: # Only attempt chart for choice 6 batch
-                sequences_with_stops_data = []
-                for res_dict in results: # Iterate over original results which have richer data types
-                    if res_dict.get('Analysis_Type') == 'Plus1 Frame Stop Count Analysis' and 'Plus1_Total_Stops' in res_dict:
-                        try:
-                            total_stops = int(res_dict.get('Plus1_Total_Stops', 0))
-                            if total_stops > 0:
-                                sequences_with_stops_data.append({
-                                    'name': res_dict.get('Sequence_Name', 'Unknown'),
-                                    'taa': int(res_dict.get('Plus1_TAA_Count', 0)),
-                                    'tag': int(res_dict.get('Plus1_TAG_Count', 0)),
-                                    'tga': int(res_dict.get('Plus1_TGA_Count', 0)),
-                                    'total': total_stops
-                                })
-                        except ValueError:
-                            logger.warning(f"Could not parse stop counts for {res_dict.get('Sequence_Name', 'Unknown')} in batch chart prep.")
-                            continue
+            # Aggregate chart logic (previously batch_chart_path)
+            if choice == 6: 
+                # This is where the old aggregate chart was.
+                # The new per-sequence composite chart is generated further down.
+                # For this subtask, we are modifying the *aggregate* chart part first.
                 
-                if sequences_with_stops_data:
-                    plt_title = ""
-                    chart_labels = []
-                    chart_sizes = []
+                # Collect data for an aggregate chart (if still desired, or remove this block)
+                total_taa = sum(int(r.get('Plus1_TAA_Count',0)) for r in results if r.get('Analysis_Type') == 'Plus1 Frame Stop Count Analysis')
+                total_tag = sum(int(r.get('Plus1_TAG_Count',0)) for r in results if r.get('Analysis_Type') == 'Plus1 Frame Stop Count Analysis')
+                total_tga = sum(int(r.get('Plus1_TGA_Count',0)) for r in results if r.get('Analysis_Type') == 'Plus1 Frame Stop Count Analysis')
+                
+                agg_chart_labels = ['TAA', 'TAG', 'TGA']
+                agg_chart_sizes = [total_taa, total_tag, total_tga]
+                
+                valid_agg_labels = [l for i, l in enumerate(agg_chart_labels) if agg_chart_sizes[i] > 0]
+                valid_agg_sizes = [s for s in agg_chart_sizes if s > 0]
 
-                    if len(sequences_with_stops_data) == 1:
-                        seq_data = sequences_with_stops_data[0]
-                        plt_title = f"+1 Stop Codon Distribution for {seq_data['name']}"
-                        temp_labels = ['TAA', 'TAG', 'TGA']
-                        temp_sizes = [seq_data['taa'], seq_data['tag'], seq_data['tga']]
-                        chart_labels = [l for i, l in enumerate(temp_labels) if temp_sizes[i] > 0]
-                        chart_sizes = [s for s in temp_sizes if s > 0]
-                    elif len(sequences_with_stops_data) > 1:
-                        plt_title = "Proportion of Total +1 Stops per Sequence (Batch)"
-                        chart_labels = [s['name'] for s in sequences_with_stops_data]
-                        chart_sizes = [s['total'] for s in sequences_with_stops_data]
-                    
-                    if chart_labels and chart_sizes and sum(chart_sizes) > 0 :
+                if sum(valid_agg_sizes) > 0:
+                    try:
+                        plt.style.use('ggplot') # Ensure ggplot style
+                        fig_agg, ax_agg = plt.subplots()
+                        ax_agg.pie(valid_agg_sizes, labels=valid_agg_labels, autopct='%1.1f%%', startangle=90)
+                        ax_agg.axis('equal')
+                        ax_agg.set_title('Aggregate +1 Stop Codon Distribution (Batch)')
+                        agg_chart_file_path = 'batch_aggregate_plus1_stop_distribution.png' # Step 4.a.i
+                        plt.savefig(agg_chart_file_path)
+                        plt.close(fig_agg)
+                        logger.info(f"Aggregate batch chart generated: {agg_chart_file_path}")
+                        # Step 4.a.ii: os.remove for agg_chart_file_path is implicitly removed by not adding it here.
+                    except Exception as e_agg_chart:
+                        logger.error(f"Aggregate batch chart generation failed: {e_agg_chart}")
+
+                # Per-sequence composite chart generation (from previous subtask, ensure it's still here)
+                sequences_for_individual_charts = []
+                for res_dict in results:
+                    if res_dict.get('Analysis_Type') == 'Plus1 Frame Stop Count Analysis' and res_dict.get('Plus1_Total_Stops', 0) > 0:
                         try:
-                            fig, ax = plt.subplots()
-                            ax.pie(chart_sizes, labels=chart_labels, autopct='%1.1f%%', startangle=90)
+                            sequences_for_individual_charts.append({
+                                'name': res_dict.get('Sequence_Name', 'Unknown'),
+                                'taa': int(res_dict.get('Plus1_TAA_Count', 0)),
+                                'tag': int(res_dict.get('Plus1_TAG_Count', 0)),
+                                'tga': int(res_dict.get('Plus1_TGA_Count', 0)),
+                            })
+                        except ValueError:
+                            logger.warning(f"Could not parse stop counts for {res_dict.get('Sequence_Name', 'Unknown')} for individual chart.")
+                
+                if sequences_for_individual_charts:
+                    num_charts = len(sequences_for_individual_charts)
+                    cols = min(3, num_charts) if num_charts > 0 else 1
+                    rows = math.ceil(num_charts / cols) if num_charts > 0 else 1
+                    
+                    plt.style.use('ggplot') 
+                    fig, axes = plt.subplots(rows, cols, figsize=(cols * 5, rows * 5 + (1 if rows > 1 else 0))) 
+
+                    if num_charts == 1:
+                        axes_flat = [axes]
+                    elif num_charts == 0: # Handle case with no charts to avoid error with ravel
+                        axes_flat = []
+                    else:
+                        axes_flat = axes.ravel()
+
+                    for idx, chart_data in enumerate(sequences_for_individual_charts):
+                        ax = axes_flat[idx]
+                        labels = ['TAA', 'TAG', 'TGA']
+                        sizes = [chart_data['taa'], chart_data['tag'], chart_data['tga']]
+                        
+                        valid_labels = [l for i, l in enumerate(labels) if sizes[i] > 0]
+                        valid_sizes = [s for s in sizes if s > 0]
+
+                        if sum(valid_sizes) > 0:
+                            ax.pie(valid_sizes, labels=valid_labels, autopct='%1.1f%%', startangle=90)
+                            ax.set_title(chart_data['name'], fontsize=10)
                             ax.axis('equal')
-                            plt.title(plt_title)
-                            batch_chart_path = 'temp_batch_pie.png'
-                            plt.savefig(batch_chart_path)
-                            plt.close(fig)
-                            logger.info(f"Batch chart generated: {batch_chart_path}")
-                        except Exception as e_batch_chart:
-                            logger.error(f"Batch chart generation failed: {e_batch_chart}")
-                            batch_chart_path = None
+                        else:
+                            ax.text(0.5, 0.5, 'No +1 Stops', horizontalalignment='center', verticalalignment='center')
+                            ax.axis('off')
+                    
+                    for i in range(num_charts, len(axes_flat)):
+                        axes_flat[i].axis('off')
+                    
+                    fig.suptitle('Per-Sequence +1 Stop Codon Distribution (Batch Option 6)', fontsize=16)
+                    try:
+                        plt.tight_layout(rect=[0, 0, 1, 0.96 if num_charts > 0 else 1]) 
+                    except Exception as e_layout: 
+                        logger.warning(f"Tight layout failed: {e_layout}")
+
+                    composite_chart_path = 'stop_charts.png'
+                    try:
+                        plt.savefig(composite_chart_path)
+                        logger.info(f"Saved per-sequence pie charts to {composite_chart_path}")
+                    except Exception as e_save_fig:
+                        logger.error(f"Failed to save composite chart: {e_save_fig}")
+                    plt.close(fig)
             
-            filename = save_output_to_excel(standardized_results, "Batch_Optimization_Results.xlsx", chart_image_path=batch_chart_path)
-            
-            if batch_chart_path and os.path.exists(batch_chart_path):
-                try:
-                    os.remove(batch_chart_path)
-                    logger.info(f"Temp batch chart {batch_chart_path} removed.")
-                except Exception as e_remove_batch:
-                    logger.error(f"Failed to remove temp batch chart {batch_chart_path}: {e_remove_batch}")
+            # Step 4.a.iii: Call to save_output_to_excel updated
+            filename = save_output_to_excel(standardized_results, "Batch_Optimization_Results.xlsx")
+
+            # Step 4.a.ii: os.remove for batch_chart_path (now agg_chart_file_path) is implicitly removed.
+            # The os.remove for composite_chart_path was also not present from previous steps.
 
             if filename: messagebox.showinfo("Batch Complete", f"Processed {len(results)} sequences.\nSaved to: {filename}", parent=parent_window)
         else: messagebox.showwarning("Batch Failed", "No sequences processed.", parent=parent_window)
@@ -896,49 +921,46 @@ def show_settings(): # Full version
     notebook = ttk.Notebook(settings_window); notebook.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
     general_frame, paths_frame, algo_frame = ttk.Frame(notebook), ttk.Frame(notebook), ttk.Frame(notebook)
     notebook.add(general_frame, text="General"); notebook.add(paths_frame, text="File Paths"); notebook.add(algo_frame, text="Algorithms")
-    
+
     auto_open_var = tk.BooleanVar(value=config.get("auto_open_files", True))
     ttk.Label(general_frame, text="Auto-open output files:").pack(anchor=tk.W, pady=5); ttk.Checkbutton(general_frame, variable=auto_open_var).pack(anchor=tk.W)
-    
+
     codon_file_var = tk.StringVar(value=config.get("codon_file_path", "")); ttk.Label(paths_frame, text="Codon usage file:").pack(anchor=tk.W, pady=5)
     ttk.Entry(paths_frame, textvariable=codon_file_var, width=50).pack(anchor=tk.W, pady=2)
     def browse_codon_file():
         file_path = filedialog.askopenfilename(title="Select codon file", filetypes=[("Excel","*.xlsx")], parent=settings_window)
         if file_path: codon_file_var.set(file_path)
     ttk.Button(paths_frame, text="Browse...", command=browse_codon_file).pack(anchor=tk.W, pady=2)
-    
+
     output_dir_var = tk.StringVar(value=config.get("default_output_dir", ".")); ttk.Label(paths_frame, text="Default output directory:").pack(anchor=tk.W, pady=5)
     ttk.Entry(paths_frame, textvariable=output_dir_var, width=50).pack(anchor=tk.W, pady=2)
     def browse_output_dir():
         dir_path = filedialog.askdirectory(title="Select output directory", parent=settings_window)
         if dir_path: output_dir_var.set(dir_path)
     ttk.Button(paths_frame, text="Browse...", command=browse_output_dir).pack(anchor=tk.W, pady=2)
-    
-    bias_weight_var = tk.DoubleVar(value=config.get("bias_weight", BIAS_WEIGHT_DEFAULT))
-    ttk.Label(algo_frame, text="Bias weight for balanced optimization:").pack(anchor=tk.W, pady=5)
 
     bias_weight_var = tk.DoubleVar(value=config.get("bias_weight", BIAS_WEIGHT_DEFAULT))
     ttk.Label(algo_frame, text="Bias weight for balanced optimization:").pack(anchor=tk.W, pady=5)
-    ttk.Scale(algoframe, from_=0.1, to=5.0, variable=bias_weight_var, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=2)
+    ttk.Scale(algo_frame, from_=0.1, to=5.0, variable=bias_weight_var, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=2)
     current_bias_label = ttk.Label(algo_frame, text=f"{bias_weight_var.get():.2f}"); current_bias_label.pack(anchor=tk.W)
     def update_bias_label(val): current_bias_label.config(text=f"{float(val):.2f}")
     bias_weight_var.trace_add("write", lambda n,i,m,v=bias_weight_var: update_bias_label(v.get())); update_bias_label(bias_weight_var.get())
 
-button_frame = ttk.Frame(settings_window); button_frame.pack(fill=tk.X, padx=10, pady=10)
-def save_settings_action(): 
-    global config; config.update({
-        "auto_open_files": auto_open_var.get(), "codon_file_path": codon_file_var.get(),
-        "default_output_dir": output_dir_var.get(), "bias_weight": bias_weight_var.get()})
-    save_config(config); messagebox.showinfo("Settings", "Settings saved!", parent=settings_window); settings_window.destroy()
-def reset_settings_action():
-    global config; config = DEFAULT_CONFIG.copy(); save_config(config)
-    auto_open_var.set(config["auto_open_files"]); codon_file_var.set(config["codon_file_path"])
-    output_dir_var.set(config["default_output_dir"]); bias_weight_var.set(config["bias_weight"])
-    messagebox.showinfo("Settings", "Settings reset to defaults!", parent=settings_window)
-ttk.Button(button_frame, text="Save", command=save_settings_action).pack(side=tk.LEFT, padx=5)
-ttk.Button(button_frame, text="Reset", command=reset_settings_action).pack(side=tk.LEFT, padx=5)
-ttk.Button(button_frame, text="Cancel", command=settings_window.destroy).pack(side=tk.RIGHT, padx=5)
-    
+    button_frame = ttk.Frame(settings_window); button_frame.pack(fill=tk.X, padx=10, pady=10)
+    def save_settings_action():
+        global config; config.update({
+            "auto_open_files": auto_open_var.get(), "codon_file_path": codon_file_var.get(),
+            "default_output_dir": output_dir_var.get(), "bias_weight": bias_weight_var.get()})
+        save_config(config); messagebox.showinfo("Settings", "Settings saved!", parent=settings_window); settings_window.destroy()
+    def reset_settings_action():
+        global config; config = DEFAULT_CONFIG.copy(); save_config(config)
+        auto_open_var.set(config["auto_open_files"]); codon_file_var.set(config["codon_file_path"])
+        output_dir_var.set(config["default_output_dir"]); bias_weight_var.set(config["bias_weight"])
+        messagebox.showinfo("Settings", "Settings reset to defaults!", parent=settings_window)
+    ttk.Button(button_frame, text="Save", command=save_settings_action).pack(side=tk.LEFT, padx=5)
+    ttk.Button(button_frame, text="Reset", command=reset_settings_action).pack(side=tk.LEFT, padx=5)
+    ttk.Button(button_frame, text="Cancel", command=settings_window.destroy).pack(side=tk.RIGHT, padx=5)
+
     settings_window.transient(root if root and root.winfo_exists() else None); settings_window.grab_set(); settings_window.wait_window()
 
 # --- save_accumulated_results_action (New for Step 4) ---
@@ -973,7 +995,7 @@ def save_accumulated_results_action(): # Full version
 # --- Main Application (Modified for Step 4) ---
 def create_main_menu(): # Full version
     global root, combine_outputs_var, config, logger
-    root = tk.Tk(); root.title("DNA Codon Optimization Tool - v1"); root.geometry("600x550")
+    root = tk.Tk(); root.title("DNA Codon Optimization Tool - v1.1"); root.geometry("600x550")
     main_frame = ttk.Frame(root, padding="20"); main_frame.pack(fill=tk.BOTH, expand=True)
     ttk.Label(main_frame, text="DNA Codon Optimization Tool", font=("Arial", 16, "bold")).pack(pady=10)
     desc_text = "* Standard optimization\n* CAI analysis\n* Specialized +1 stops\n* Batch processing" # Corrected
