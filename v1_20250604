@@ -933,7 +933,7 @@ current_bias_label = ttk.Label(algo_frame, text=f"{bias_weight_var.get():.2f}");
 def update_bias_label(val): current_bias_label.config(text=f"{float(val):.2f}")
 bias_weight_var.trace_add("write", lambda n,i,m,v=bias_weight_var: update_bias_label(v.get())); update_bias_label(bias_weight_var.get())
 
-    button_frame = ttk.Frame(settings_window); button_frame.pack(fill=tk.X, padx=10, pady=10)
+button_frame = ttk.Frame(settings_window); button_frame.pack(fill=tk.X, padx=10, pady=10)
 def save_settings_action(): 
     global config; config.update({
         "auto_open_files": auto_open_var.get(), "codon_file_path": codon_file_var.get(),
