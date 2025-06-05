@@ -9,6 +9,7 @@ from collections import defaultdict, Counter
 from Bio.Seq import Seq
 import logging
 import json
+import math
 import matplotlib.pyplot as plt
 from openpyxl import load_workbook
 from openpyxl.drawing.image import Image
@@ -68,7 +69,32 @@ config = load_config()
 accumulated_results_list = []
 accumulation_run_id_counter = 0
 combine_outputs_var = None 
-root = None 
+root = None
+
+# -------------------
+# macOS Specific Helper Functions
+# -------------------
+def set_macos_app_icon(root_window, logger_instance):
+    """Sets the application icon on macOS if the icon file exists."""
+    if platform.system() == "Darwin":
+        icon_path = "/Users/edsimmons/Desktop/EdsDesktop/PHD/Desktop/PHD/Coding/nucleic_acid_logo.png"
+        if os.path.exists(icon_path):
+            try:
+                # Ensure root_window is not None and is a valid Tkinter window
+                if root_window and hasattr(root_window, 'iconphoto'):
+                    img = tk.PhotoImage(file=icon_path)
+                    root_window.iconphoto(True, img)
+                    logger_instance.info(f"Attempted to set macOS application icon from {icon_path}")
+                else:
+                    logger_instance.warning("Root window not valid for setting macOS icon.")
+            except tk.TclError as e:
+                logger_instance.warning(f"Failed to set macOS application icon from {icon_path}: {e}. Might be an invalid image format or other Tcl/Tk error.")
+            except Exception as e:
+                logger_instance.warning(f"An unexpected error occurred while setting macOS application icon: {e}")
+        else:
+            logger_instance.warning(f"macOS icon file not found at {icon_path}. Application will use default icon.")
+    # else:
+        # logger_instance.info("Not on macOS, skipping application icon setting.") # Optional: for non-macOS platforms
 
 # -------------------
 # Utility Functions
@@ -530,7 +556,14 @@ def get_user_input(): # Full version
     parent_dialog_choice = root if root and root.winfo_exists() else tk.Toplevel()
     if parent_dialog_choice is not root : parent_dialog_choice.withdraw()
     
-    choice = simpledialog.askinteger("Choose Optimization Method", "Select optimization method (1-6):...", minvalue=1, maxvalue=6, parent=parent_dialog_choice)
+    prompt_message = """Choose optimization method:
+1: Standard Codon Optimization
+2: CAI Weight Analysis (Original)
+3: Balanced Optimization
+4: NC Stop Codon Optimization
+5: JT Plus1 Stop Optimization
+6: Plus1 Frame Stop Count Analysis"""
+    choice = simpledialog.askinteger("Choose Optimization Method", prompt_message, minvalue=1, maxvalue=6, parent=parent_dialog_choice)
     
     if parent_dialog_choice is not root and not parent_dialog_choice.winfo_exists(): return None, None, None # Window closed
     if parent_dialog_choice is not root: parent_dialog_choice.destroy()
@@ -590,7 +623,17 @@ def run_optimization(clean_seq, protein_seq, choice): # Full version
             }
             filename_template_for_individual_save = "Plus1_Frame_Stop_Analysis.xlsx"; analysis_type_description = "Plus1 Frame Stop Count Analysis"
 
+        # Data extraction for chart, common for choice 6 regardless of accumulation mode
+        chart_image_to_embed_in_excel = None # Will store path if chart is saved for Excel
+        if choice == 6:
+            counts_for_chart = dict(zip(data.get('Stop_Codon_Type', []), data.get('Count_in_Plus1_Frame', [])))
+            chart_labels = ['TAA', 'TAG', 'TGA']
+            chart_sizes = [counts_for_chart.get('TAA', 0), counts_for_chart.get('TAG', 0), counts_for_chart.get('TGA', 0)]
+            valid_chart_labels = [label for i, label in enumerate(chart_labels) if chart_sizes[i] > 0]
+            valid_chart_sizes = [size for size in chart_sizes if size > 0]
+
         if combine_outputs_var is not None and combine_outputs_var.get():
+            # Accumulation mode
             accumulation_run_id_counter += 1
             current_run_rows = []
             num_rows = 0
@@ -606,49 +649,46 @@ def run_optimization(clean_seq, protein_seq, choice): # Full version
             accumulated_results_list.append(current_run_rows)
             logger.info(f"Results from run {accumulation_run_id_counter} ({analysis_type_description}) added.")
             messagebox.showinfo("Accumulated", f"Results added. Buffer: {len(accumulated_results_list)} run(s).", parent=parent_window)
+            # If accumulating, and it's choice 6, we might still want to generate the chart for Excel if that's a desired feature.
+            # However, the prompt focuses on "combine_outputs_var is false" for plt.show().
+            # For now, let's assume accumulation mode does not involve plt.show() or saving individual charts for Excel in this step.
+            # The main save_accumulated_results_action would handle any aggregate charting if needed.
         else:
+            # Not in accumulation mode (combine_outputs_var is false)
             if not filename_template_for_individual_save:
                 logger.error("Filename template not set."); messagebox.showerror("Internal Error", "Filename template not set.", parent=parent_window); return
             
-            chart_file_path = None # Initialize chart_file_path for this 'else' block
             if choice == 6:
-                # Extract counts for TAA, TAG, TGA from the 'data' dictionary
-                counts_for_chart = dict(zip(data.get('Stop_Codon_Type', []), data.get('Count_in_Plus1_Frame', [])))
-                chart_labels = ['TAA', 'TAG', 'TGA']
-                chart_sizes = [counts_for_chart.get('TAA', 0), counts_for_chart.get('TAG', 0), counts_for_chart.get('TGA', 0)]
-                
-                # Filter out zero-count entries for a cleaner pie chart
-                valid_chart_labels = [label for i, label in enumerate(chart_labels) if chart_sizes[i] > 0]
-                valid_chart_sizes = [size for size in chart_sizes if size > 0]
-
-                if sum(valid_chart_sizes) > 0: # Only generate chart if there's data
+                if sum(valid_chart_sizes) > 0:
                     try:
                         fig, ax = plt.subplots()
                         ax.pie(valid_chart_sizes, labels=valid_chart_labels, autopct='%1.1f%%', startangle=90)
-                        ax.axis('equal')  # Equal aspect ratio ensures that pie is drawn as a circle.
-                        plt.title('Distribution of +1 Stop Codons (TAA, TAG, TGA)') # Add a title
-                        chart_file_path = 'temp_plus1_pie.png' # Define temp image path
-                        plt.savefig(chart_file_path)
-                        plt.close(fig) # Close the figure to free memory
-                        logger.info(f"Chart for choice 6 generated: {chart_file_path}")
+                        ax.axis('equal')
+                        plt.title('Distribution of +1 Stop Codons (TAA, TAG, TGA)')
+                        plt.show() # Display chart directly
+                        plt.close(fig) # Close the figure
+                        logger.info("Chart for choice 6 displayed directly as combine_outputs_var is false.")
+                        set_macos_app_icon(root, logger) # Re-apply icon after matplotlib window
+                        # No chart_image_to_embed_in_excel is set here, so it remains None for save_output_to_excel
                     except Exception as e_chart_gen:
-                        logger.error(f"Chart generation failed for choice 6: {e_chart_gen}")
-                        chart_file_path = None # Ensure path is None if generation fails
+                        logger.error(f"Chart display failed for choice 6: {e_chart_gen}")
                 else:
-                    logger.info("No +1 stop codons to chart for choice 6.")
-                    chart_file_path = None
+                    logger.info("No +1 stop codons to chart for choice 6 (when not accumulating).")
+
+            # For other choices that might generate charts (currently none do, but for future proofing):
+            # if choice == X and needs_chart_for_excel:
+            #   chart_image_to_embed_in_excel = ... save fig ...
             
-            output_filename = save_output_to_excel(data, filename_template_for_individual_save, chart_image_path=(chart_file_path if choice == 6 else None))
+            output_filename = save_output_to_excel(data, filename_template_for_individual_save, chart_image_path=chart_image_to_embed_in_excel) # Pass None for choice 6
             
-            # Cleanup logic will be added after this 'if output_filename:' block in a subsequent step
             if output_filename: messagebox.showinfo("Complete", f"Operation completed.\nSaved to: {output_filename}", parent=parent_window)
             
-            if chart_file_path and os.path.exists(chart_file_path): # Cleanup chart
+            if chart_image_to_embed_in_excel and os.path.exists(chart_image_to_embed_in_excel): # Cleanup if any chart was saved for excel
                 try:
-                    os.remove(chart_file_path)
-                    logger.info(f"Temporary chart file {chart_file_path} removed.")
+                    os.remove(chart_image_to_embed_in_excel)
+                    logger.info(f"Temporary chart file {chart_image_to_embed_in_excel} removed.")
                 except Exception as e_remove:
-                    logger.error(f"Failed to remove temporary chart file {chart_file_path}: {e_remove}")
+                    logger.error(f"Failed to remove temporary chart file {chart_image_to_embed_in_excel}: {e_remove}")
     except Exception as e:
         logger.error(f"Error during optimization choice {choice}: {e}", exc_info=True)
         messagebox.showerror("Optimization Error", f"An error occurred: {e}", parent=parent_window)
@@ -682,7 +722,15 @@ def process_batch_sequences(): # Full version
         
         dialog_parent_choice = tk.Toplevel(parent_window) if parent_window else tk.Toplevel()
         dialog_parent_choice.withdraw()
-        choice = simpledialog.askinteger("Batch Processing", f"Found {len(sequences)} sequences.\nChoose method (1-6):", minvalue=1, maxvalue=6, parent=dialog_parent_choice)
+        prompt_message = f"""Found {len(sequences)} sequences.
+Choose optimization method for batch processing:
+1: Standard Codon Optimization
+2: CAI Weight Analysis (Original)
+3: Balanced Optimization
+4: NC Stop Codon Optimization
+5: JT Plus1 Stop Optimization
+6: Plus1 Frame Stop Count Analysis"""
+        choice = simpledialog.askinteger("Batch Processing", prompt_message, minvalue=1, maxvalue=6, parent=dialog_parent_choice)
         dialog_parent_choice.destroy()
         if choice is None: return
         
@@ -726,11 +774,37 @@ def process_batch_sequences(): # Full version
                 logger.error(f"Error processing {name}: {e}", exc_info=True); results.append({'Sequence_Name': name, 'Error': str(e)})
         
         if results:
-            all_keys = set().union(*(d.keys() for d in results))
-            standardized_results = [{key: d.get(key, 'N/A') for key in all_keys} for d in results]
+            all_keys_initial = set().union(*(d.keys() for d in results))
+
+            final_ordered_keys = []
+            if choice == 6:
+                # Define the specific order for choice 6
+                preferred_order = [
+                    'Plus1_TGA_Count', 'Plus1_TAA_Count', 'Plus1_TAG_Count',
+                    'Plus1_Total_Stops', 'Sequence_Name'
+                ]
+                # Start with preferred keys that are actually present
+                final_ordered_keys.extend([key for key in preferred_order if key in all_keys_initial])
+                # Add remaining keys, sorted, ensuring no duplicates from preferred_order
+                remaining_keys = sorted([key for key in all_keys_initial if key not in final_ordered_keys])
+                final_ordered_keys.extend(remaining_keys)
+            else:
+                # Default sorting for other choices (e.g., alphabetical)
+                # Or maintain a specific default order if needed for other choices.
+                # For now, using sorted list of all keys as a general default.
+                final_ordered_keys = sorted(list(all_keys_initial))
+
+            # Create standardized_results with the desired key order for each dictionary
+            # This helps ensure pandas DataFrame respects this order (especially Python 3.7+)
+            standardized_results_ordered = []
+            for original_dict in results: # 'results' is the list of dicts from processing
+                new_ordered_dict = {}
+                for key in final_ordered_keys:
+                    new_ordered_dict[key] = original_dict.get(key, 'N/A')
+                standardized_results_ordered.append(new_ordered_dict)
             
-            batch_chart_path = None
-            if choice == 6: # Only attempt chart for choice 6 batch
+            # batch_chart_path = None # Comment from previous logic, not directly relevant here
+            if choice == 6:
                 sequences_with_stops_data = []
                 for res_dict in results: # Iterate over original results which have richer data types
                     if res_dict.get('Analysis_Type') == 'Plus1 Frame Stop Count Analysis' and 'Plus1_Total_Stops' in res_dict:
@@ -748,45 +822,84 @@ def process_batch_sequences(): # Full version
                             logger.warning(f"Could not parse stop counts for {res_dict.get('Sequence_Name', 'Unknown')} in batch chart prep.")
                             continue
                 
+                charts_shown = False
                 if sequences_with_stops_data:
-                    plt_title = ""
-                    chart_labels = []
-                    chart_sizes = []
+                    num_sequences_to_chart = len(sequences_with_stops_data)
 
-                    if len(sequences_with_stops_data) == 1:
+                    if num_sequences_to_chart == 1:
                         seq_data = sequences_with_stops_data[0]
-                        plt_title = f"+1 Stop Codon Distribution for {seq_data['name']}"
-                        temp_labels = ['TAA', 'TAG', 'TGA']
-                        temp_sizes = [seq_data['taa'], seq_data['tag'], seq_data['tga']]
-                        chart_labels = [l for i, l in enumerate(temp_labels) if temp_sizes[i] > 0]
-                        chart_sizes = [s for s in temp_sizes if s > 0]
-                    elif len(sequences_with_stops_data) > 1:
-                        plt_title = "Proportion of Total +1 Stops per Sequence (Batch)"
-                        chart_labels = [s['name'] for s in sequences_with_stops_data]
-                        chart_sizes = [s['total'] for s in sequences_with_stops_data]
+                        single_plt_title = f"+1 Stop Codon Distribution for {seq_data['name']}"
+                        single_temp_labels = ['TAA', 'TAG', 'TGA']
+                        single_temp_sizes = [seq_data['taa'], seq_data['tag'], seq_data['tga']]
+
+                        single_chart_labels = [l for i, l in enumerate(single_temp_labels) if single_temp_sizes[i] > 0]
+                        single_chart_sizes = [s for s in single_temp_sizes if s > 0]
+
+                        if not single_chart_sizes:
+                            logger.info(f"Sequence {seq_data['name']} has no +1 stop codons (TAA, TAG, TGA) to display.")
+                        else:
+                            try:
+                                fig, ax = plt.subplots()
+                                ax.pie(single_chart_sizes, labels=single_chart_labels, autopct='%1.1f%%', startangle=90)
+                                ax.axis('equal')
+                                plt.title(single_plt_title)
+                                plt.show()
+                                plt.close(fig)
+                                logger.info(f"Batch chart displayed for single sequence: {single_plt_title}")
+                                charts_shown = True
+                            except Exception as e_single_chart:
+                                logger.error(f"Single batch chart display failed: {e_single_chart}")
                     
-                    if chart_labels and chart_sizes and sum(chart_sizes) > 0 :
-                        try:
-                            fig, ax = plt.subplots()
-                            ax.pie(chart_sizes, labels=chart_labels, autopct='%1.1f%%', startangle=90)
+                    elif num_sequences_to_chart > 1:
+                        num_cols = 2  # Or min(3, num_sequences_to_chart)
+                        num_rows = math.ceil(num_sequences_to_chart / num_cols)
+                        fig_height = 4 * num_rows
+                        fig_width = 5 * num_cols
+
+                        fig, axes = plt.subplots(num_rows, num_cols, figsize=(fig_width, fig_height))
+                        axes = axes.flatten()
+
+                        for i, seq_data in enumerate(sequences_with_stops_data):
+                            ax = axes[i]
+                            current_title = f"{seq_data['name']}"
+                            current_labels_all = ['TAA', 'TAG', 'TGA']
+                            current_sizes_all = [seq_data['taa'], seq_data['tag'], seq_data['tga']]
+
+                            current_labels = [l for idx, l in enumerate(current_labels_all) if current_sizes_all[idx] > 0]
+                            current_sizes = [s for s in current_sizes_all if s > 0]
+
+                            if not current_sizes:
+                                ax.text(0.5, 0.5, 'No TAA/TAG/TGA\n+1 stop codons', ha='center', va='center', fontsize=9)
+                                ax.set_title(current_title, fontsize=10)
+                                ax.axis('off')
+                                continue
+
+                            ax.pie(current_sizes, labels=current_labels, autopct='%1.1f%%', startangle=90, textprops={'fontsize': 9})
                             ax.axis('equal')
-                            plt.title(plt_title)
-                            batch_chart_path = 'temp_batch_pie.png'
-                            plt.savefig(batch_chart_path)
+                            ax.set_title(current_title, fontsize=10)
+
+                        for j in range(num_sequences_to_chart, len(axes)):
+                            axes[j].axis('off') # Hide unused subplots
+
+                        fig.suptitle("Per-Sequence +1 Stop Codon Distributions (Batch)", fontsize=14, y=1.0) # Adjusted y for suptitle
+                        plt.tight_layout(rect=[0, 0, 1, 0.97]) # Adjust rect to make space for suptitle
+                        try:
+                            plt.show()
                             plt.close(fig)
-                            logger.info(f"Batch chart generated: {batch_chart_path}")
-                        except Exception as e_batch_chart:
-                            logger.error(f"Batch chart generation failed: {e_batch_chart}")
-                            batch_chart_path = None
+                            logger.info("Composite batch chart displayed for multiple sequences.")
+                            charts_shown = True
+                        except Exception as e_composite_chart:
+                            logger.error(f"Composite batch chart display failed: {e_composite_chart}")
+                else:
+                    logger.info("No sequences with +1 stop data to chart in batch mode.")
+
+                if charts_shown: # Only reset icon if a chart was actually shown
+                    set_macos_app_icon(root, logger)
             
-            filename = save_output_to_excel(standardized_results, "Batch_Optimization_Results.xlsx", chart_image_path=batch_chart_path)
+            # For choice 6, chart_image_path will be None, so no chart is passed to Excel.
+            filename = save_output_to_excel(standardized_results_ordered, "Batch_Optimization_Results.xlsx", chart_image_path=None) # Pass None for choice 6 chart
             
-            if batch_chart_path and os.path.exists(batch_chart_path):
-                try:
-                    os.remove(batch_chart_path)
-                    logger.info(f"Temp batch chart {batch_chart_path} removed.")
-                except Exception as e_remove_batch:
-                    logger.error(f"Failed to remove temp batch chart {batch_chart_path}: {e_remove_batch}")
+            # No batch_chart_path to clean up as it's not created for choice 6 for file saving
 
             if filename: messagebox.showinfo("Batch Complete", f"Processed {len(results)} sequences.\nSaved to: {filename}", parent=parent_window)
         else: messagebox.showwarning("Batch Failed", "No sequences processed.", parent=parent_window)
@@ -876,7 +989,10 @@ def save_accumulated_results_action(): # Full version
 # --- Main Application (Modified for Step 4) ---
 def create_main_menu(): # Full version
     global root, combine_outputs_var, config, logger
-    root = tk.Tk(); root.title("DNA Codon Optimization Tool - v1"); root.geometry("600x550")
+    root = tk.Tk()
+    set_macos_app_icon(root, logger) # Set initial icon
+
+    root.title("DNA Codon Optimization Tool - v1"); root.geometry("600x550")
     main_frame = ttk.Frame(root, padding="20"); main_frame.pack(fill=tk.BOTH, expand=True)
     ttk.Label(main_frame, text="DNA Codon Optimization Tool", font=("Arial", 16, "bold")).pack(pady=10)
     desc_text = "* Standard optimization\n* CAI analysis\n* Specialized +1 stops\n* Batch processing" # Corrected
