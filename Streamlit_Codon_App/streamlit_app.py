@@ -946,9 +946,28 @@ def adjust_gc_content(sequence, max_gc=70.0, min_gc=55.0):
     Adjusts the GC content of a sequence to be within a target range by using synonymous codons.
     Prioritizes swapping high-GC codons for low-GC codons.
     """
-    if not st.session_state.aa_to_codons:
-        st.error("Codon usage data not loaded. Cannot perform GC adjustment.")
-        return sequence
+    # Auto-load default codon file if available and not already loaded
+    if not st.session_state.genetic_code and 'codon_data_loaded' not in st.session_state:
+        default_codon_file = "HumanCodons.xlsx"
+        if os.path.exists(default_codon_file):
+            try:
+                with open(default_codon_file, 'rb') as f:
+                    file_content = f.read()
+                genetic_code, codon_weights, preferred_codons, human_codon_usage, aa_to_codons, codon_df = load_codon_data_from_file(file_content)
+                st.session_state.genetic_code = genetic_code
+                st.session_state.codon_weights = codon_weights
+                st.session_state.preferred_codons = preferred_codons
+                st.session_state.human_codon_usage = human_codon_usage
+                st.session_state.aa_to_codons = aa_to_codons
+                st.session_state.codon_data_loaded = True
+                st.session_state.codon_file_source = "Default (HumanCodons.xlsx)"
+                st.success(f"Auto-loaded {len(codon_df)} codon entries from HumanCodons.xlsx")
+            except Exception as e:
+                st.warning(f"Could not auto-load HumanCodons.xlsx: {e}")
+                # Don't stop the app, just continue without auto-loading
+        else:
+        # File doesn't exist, just continue - user can upload manually
+            pass
 
     current_gc = calculate_gc_content(sequence)
     if current_gc <= max_gc:
