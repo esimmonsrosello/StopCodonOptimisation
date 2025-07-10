@@ -1,0 +1,12 @@
+to start virtual environment
+
+source .venv/bin/activate
+
+to stop
+
+deactivate
+
+
+to run streamlit
+
+streamlit run streamlit_app.python

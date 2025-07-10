@@ -1,0 +1,6 @@
+{
+  "codon_file_path": "HumanCodons.xlsx",
+  "bias_weight": 0.9980263157894738,
+  "auto_open_files": true,
+  "default_output_dir": "."
+}
