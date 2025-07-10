@@ -1,92 +1,95 @@
 import streamlit as st
-import pandas as pd
-import numpy as np
-import matplotlib.pyplot as plt
-import plotly.graph_objects as go
-import plotly.express as px
-from plotly.subplots import make_subplots
 import os
-import json
-import logging
-from collections import defaultdict, Counter
-from Bio.Seq import Seq
-from openpyxl import load_workbook
-import io
-import tempfile
 import requests
-import time
-from bs4 import BeautifulSoup
-import re
-from urllib.parse import urljoin, urlparse, quote
 from dotenv import load_dotenv
-from typing import List, Dict, Set
 from anthropic import Anthropic
-from datetime import datetime
+import time
 
 # Configure page
 st.set_page_config(
-    page_title="DNA Codon Optimization and Analysis Tool",
-    page_icon=":dna:",
-    layout="wide",
-    initial_sidebar_state="expanded"
+    page_title="API Engine Testing",
+    page_icon="🧬",
+    layout="wide"
 )
 
-st.title("🧬 Session State Testing")
+st.title("🧬 API Engine Testing")
 
-# Test session state initialization step by step
-try:
-    if 'config' not in st.session_state:
-        st.session_state.config = {
-            "codon_file_path": "HumanCodons.xlsx",
-            "bias_weight": 1,
-            "auto_open_files": True,
-            "default_output_dir": "."
-        }
-    st.success("✅ config initialized")
-except Exception as e:
-    st.error(f"❌ config failed: {e}")
+# Load environment variables
+load_dotenv()
 
+st.subheader("Testing PatentSearchEngine")
 try:
-    if 'active_theme' not in st.session_state:
-        st.session_state.active_theme = "Default"
-    st.success("✅ active_theme initialized")
-except Exception as e:
-    st.error(f"❌ active_theme failed: {e}")
-
-try:
-    if 'accumulated_results' not in st.session_state:
-        st.session_state.accumulated_results = []
-    st.success("✅ accumulated_results initialized")
-except Exception as e:
-    st.error(f"❌ accumulated_results failed: {e}")
-
-try:
-    if 'genetic_code' not in st.session_state:
-        st.session_state.genetic_code = {}
-    if 'codon_weights' not in st.session_state:
-        st.session_state.codon_weights = {}
-    if 'preferred_codons' not in st.session_state:
-        st.session_state.preferred_codons = {}
-    st.success("✅ codon dictionaries initialized")
-except Exception as e:
-    st.error(f"❌ codon dictionaries failed: {e}")
-
-# Test creating the API engines WITHOUT initializing them in session state yet
-try:
-    # Just test if we can create the classes
-    st.write("Testing API engine creation...")
+    class PatentSearchEngine:
+        def __init__(self):
+            self.serper_api_key = os.getenv('SERPER_API_KEY')
+            self.anthropic_api_key = os.getenv('ANTHROPIC_API')
+            self.anthropic = Anthropic(api_key=self.anthropic_api_key) if self.anthropic_api_key else None
     
-    # Test creating without storing in session state
-    from anthropic import Anthropic
-    test_anthropic = Anthropic(api_key="test") if "test" else None
-    st.success("✅ Can create Anthropic class")
-    
-    st.success("✅ API engines can be created")
+    patent_engine = PatentSearchEngine()
+    st.success("✅ PatentSearchEngine created successfully")
+    st.write(f"SERPER API Key: {'Found' if patent_engine.serper_api_key else 'Not found'}")
+    st.write(f"Anthropic API Key: {'Found' if patent_engine.anthropic_api_key else 'Not found'}")
 except Exception as e:
-    st.error(f"❌ API engine creation failed: {e}")
+    st.error(f"❌ PatentSearchEngine failed: {e}")
 
-st.info("Session state testing complete!")
+st.subheader("Testing NCBISearchEngine")
+try:
+    class NCBISearchEngine:
+        def __init__(self):
+            self.serper_api_key = os.getenv('SERPER_API_KEY')
+            self.base_url = "https://www.ncbi.nlm.nih.gov"
+            self.session = requests.Session()
+            self.session.headers.update({
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+            })
+            self.anthropic_api_key = os.getenv('ANTHROPIC_API')
+            self.anthropic = Anthropic(api_key=self.anthropic_api_key) if self.anthropic_api_key else None
+    
+    ncbi_engine = NCBISearchEngine()
+    st.success("✅ NCBISearchEngine created successfully")
+except Exception as e:
+    st.error(f"❌ NCBISearchEngine failed: {e}")
 
-# Show what's in session state
-st.subheader("Current Session State:")
-st.write(dict(st.session_state))
+st.subheader("Testing UniProtSearchEngine")
+try:
+    class UniProtSearchEngine:
+        def __init__(self):
+            self.base_url = "https://www.uniprot.org"
+            self.api_url = "https://rest.uniprot.org"
+            self.session = requests.Session()
+            self.session.headers.update({
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+            })
+            self.anthropic_api_key = os.getenv('ANTHROPIC_API')
+            self.anthropic = Anthropic(api_key=self.anthropic_api_key) if self.anthropic_api_key else None
+    
+    uniprot_engine = UniProtSearchEngine()
+    st.success("✅ UniProtSearchEngine created successfully")
+except Exception as e:
+    st.error(f"❌ UniProtSearchEngine failed: {e}")
+
+st.subheader("Testing putting engines in session state")
+try:
+    if 'test_patent_engine' not in st.session_state:
+        st.session_state.test_patent_engine = PatentSearchEngine()
+    if 'test_ncbi_engine' not in st.session_state:
+        st.session_state.test_ncbi_engine = NCBISearchEngine()
+    if 'test_uniprot_engine' not in st.session_state:
+        st.session_state.test_uniprot_engine = UniProtSearchEngine()
+    
+    st.success("✅ All engines stored in session state successfully")
+except Exception as e:
+    st.error(f"❌ Storing engines in session state failed: {e}")
+
+st.info("API Engine testing complete!")
+
+# Test a simple network request
+st.subheader("Testing Network Connection")
+try:
+    response = requests.get("https://httpbin.org/get", timeout=5)
+    if response.status_code == 200:
+        st.success("✅ Network connection working")
+    else:
+        st.warning(f"⚠️ Network response: {response.status_code}")
+except Exception as e:
+    st.error(f"❌ Network test failed: {e}")
