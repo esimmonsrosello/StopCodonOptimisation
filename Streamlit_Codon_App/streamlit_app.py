@@ -3216,6 +3216,8 @@ def run_single_optimization(sequence, method, bias_weight=None):
 
 def main():
     """Main Streamlit application"""
+    st.sidebar.write("🚀 DEBUG: App is starting...")  # ADD THIS LINE
+
     # Apply the selected theme CSS
     inject_app_theme()
     # Initialize research engines
@@ -3294,7 +3296,7 @@ def main():
                 st.error(f"Error loading codon file: {e}")
         elif not st.session_state.genetic_code:
             st.warning("No codon usage file found. Please upload HumanCodons.xlsx or place it in the application directory.")
-            st.stop()
+            #st.stop()
         
         st.divider()
         
