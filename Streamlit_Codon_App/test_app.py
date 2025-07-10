@@ -1,118 +1,156 @@
 import streamlit as st
 import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import plotly.graph_objects as go
+import plotly.express as px
+from plotly.subplots import make_subplots
 import os
+import json
+import logging
+from collections import defaultdict, Counter
+from Bio.Seq import Seq
+from openpyxl import load_workbook
 import io
-from collections import defaultdict
+import tempfile
+import requests
+import time
+from bs4 import BeautifulSoup
+import re
+from urllib.parse import urljoin, urlparse, quote
+from dotenv import load_dotenv
+from typing import List, Dict, Set
+from anthropic import Anthropic
+from datetime import datetime
 
 # Configure page
 st.set_page_config(
-    page_title="Codon File Testing",
-    page_icon="🧬",
-    layout="wide"
+    page_title="DNA Codon Optimization and Analysis Tool",
+    page_icon=":dna:",
+    layout="wide",
+    initial_sidebar_state="expanded"
 )
 
-st.title("🧬 Codon File Loading Testing")
+# All your constants and theme definitions (simplified)
+THEMES = {
+    "Default": {
+        "info": "Default color scheme",
+        "colors": {
+            "utr5": "#1900FF",
+            "cds": "#4ECDC4",
+            "utr3": "#FF6B6B",
+            "signal_peptide": "#8A2BE2",
+            "optimization": {'original': '#FF8A80', 'optimized': '#4ECDC4'},
+            "analysis": ['#FF6B6B', '#4ECDC4', '#45B7D1'],
+            "gradient": ['#E3F2FD', '#BBDEFB', '#90CAF9']
+        }
+    }
+}
 
-# Initialize session state like your main app
-if 'genetic_code' not in st.session_state:
-    st.session_state.genetic_code = {}
-if 'codon_weights' not in st.session_state:
-    st.session_state.codon_weights = {}
-if 'preferred_codons' not in st.session_state:
-    st.session_state.preferred_codons = {}
-if 'human_codon_usage' not in st.session_state:
-    st.session_state.human_codon_usage = {}
-if 'aa_to_codons' not in st.session_state:
-    st.session_state.aa_to_codons = defaultdict(list)
+# Simple versions of your classes
+class PatentSearchEngine:
+    def __init__(self):
+        self.serper_api_key = os.getenv('SERPER_API_KEY')
+        self.anthropic_api_key = os.getenv('ANTHROPIC_API')
+        self.anthropic = Anthropic(api_key=self.anthropic_api_key) if self.anthropic_api_key else None
 
-st.subheader("Testing codon file loading function")
+class NCBISearchEngine:
+    def __init__(self):
+        self.serper_api_key = os.getenv('SERPER_API_KEY')
+        self.base_url = "https://www.ncbi.nlm.nih.gov"
 
-@st.cache_data
-def load_codon_data_from_file(file_content):
-    """Load codon usage data from uploaded file"""
-    try:
-        df = pd.read_excel(io.BytesIO(file_content))
-        df.columns = df.columns.str.strip().str.lower().str.replace(" ", "_")
-        required_columns = ['triplet', 'amino_acid', 'fraction']
-        missing_columns = [col for col in required_columns if col not in df.columns]
-        if missing_columns:
-            raise ValueError(f"Missing required columns: {missing_columns}")
+class UniProtSearchEngine:
+    def __init__(self):
+        self.base_url = "https://www.uniprot.org"
+
+def inject_app_theme():
+    """Simple theme injection"""
+    pass
+
+def main():
+    """Main Streamlit application - testing the exact structure"""
+    st.write("🚀 Starting main function...")
+    
+    # Apply the selected theme CSS
+    st.write("1. Injecting theme...")
+    inject_app_theme()
+    st.write("✅ Theme injected")
+    
+    # Initialize research engines
+    st.write("2. Initializing patent engine...")
+    if 'patent_engine' not in st.session_state:
+        st.session_state.patent_engine = PatentSearchEngine()
+    st.write("✅ Patent engine initialized")
+    
+    st.write("3. Initializing NCBI engine...")
+    if 'ncbi_engine' not in st.session_state:
+        st.session_state.ncbi_engine = NCBISearchEngine()
+    st.write("✅ NCBI engine initialized")
+    
+    st.write("4. Initializing UniProt engine...")
+    if 'uniprot_engine' not in st.session_state:
+        st.session_state.uniprot_engine = UniProtSearchEngine()
+    st.write("✅ UniProt engine initialized")
+    
+    st.write("5. Setting title...")
+    st.title("DNA Codon Optimization and Analysis Tool")
+    st.markdown("DNA sequence optimization and analysis")
+    st.write("✅ Title set")
+    
+    st.write("6. Creating sidebar...")
+    # Sidebar for settings and configuration
+    with st.sidebar:
+        st.header("Configuration")
         
-        df['triplet'] = df['triplet'].str.upper().str.strip()
-        df['amino_acid'] = df['amino_acid'].str.upper().str.strip().replace({'*': 'X'})
-        df = df.dropna(subset=['triplet', 'amino_acid', 'fraction'])
+        # Initialize session state like your app
+        if 'config' not in st.session_state:
+            st.session_state.config = {
+                "codon_file_path": "HumanCodons.xlsx",
+                "bias_weight": 1,
+                "auto_open_files": True,
+                "default_output_dir": "."
+            }
+        if 'active_theme' not in st.session_state:
+            st.session_state.active_theme = "Default"
+        if 'accumulated_results' not in st.session_state:
+            st.session_state.accumulated_results = []
+        if 'genetic_code' not in st.session_state:
+            st.session_state.genetic_code = {}
+        if 'codon_weights' not in st.session_state:
+            st.session_state.codon_weights = {}
         
-        genetic_code = df.set_index('triplet')['amino_acid'].to_dict()
-        max_fraction = df.groupby('amino_acid')['fraction'].transform('max')
-        df['weight'] = df['fraction'] / max_fraction
-        codon_weights = df.set_index('triplet')['weight'].to_dict()
-        preferred_codons = df.sort_values('fraction', ascending=False).drop_duplicates('amino_acid').set_index('amino_acid')['triplet'].to_dict()
-        human_codon_usage = df.set_index('triplet')['fraction'].to_dict()
+        st.write("Sidebar components loaded...")
         
-        aa_to_codons = defaultdict(list)
-        for codon_val, freq in human_codon_usage.items():
-            aa = genetic_code.get(codon_val, None)
-            if aa and aa != 'X':
-                aa_to_codons[aa].append((codon_val, freq))
-        
-        return genetic_code, codon_weights, preferred_codons, human_codon_usage, aa_to_codons, df
-    except Exception as e:
-        raise Exception(f"Error loading codon file: {e}")
-
-# Test if the function works
-st.write("Testing codon loading function...")
-try:
-    # We can't test with the actual file since it might not exist
-    # But we can test if the function is defined properly
-    st.success("✅ load_codon_data_from_file function defined successfully")
-except Exception as e:
-    st.error(f"❌ Function definition failed: {e}")
-
-# Test the actual auto-loading logic from your main app
-st.subheader("Testing auto-loading logic")
-
-try:
-    # This is the exact code from your main app that might be hanging
-    if not st.session_state.genetic_code and 'codon_data_loaded' not in st.session_state:
-        default_codon_file = "HumanCodons.xlsx"
-        st.write(f"Looking for {default_codon_file}...")
-        
-        if os.path.exists(default_codon_file):
-            st.info(f"✅ Found {default_codon_file} - attempting to load...")
-            try:
-                with open(default_codon_file, 'rb') as f:
-                    file_content = f.read()
-                
-                st.write("File read successfully, parsing...")
-                genetic_code, codon_weights, preferred_codons, human_codon_usage, aa_to_codons, codon_df = load_codon_data_from_file(file_content)
-                
-                st.session_state.genetic_code = genetic_code
-                st.session_state.codon_weights = codon_weights
-                st.session_state.preferred_codons = preferred_codons
-                st.session_state.human_codon_usage = human_codon_usage
-                st.session_state.aa_to_codons = aa_to_codons
-                st.session_state.codon_data_loaded = True
-                st.session_state.codon_file_source = "Default (HumanCodons.xlsx)"
-                
-                st.success(f"✅ Auto-loaded {len(codon_df)} codon entries from HumanCodons.xlsx")
-                
-            except Exception as e:
-                st.warning(f"⚠️ Could not auto-load HumanCodons.xlsx: {e}")
-                st.write("This is OK - the app should continue anyway")
+        # Display current codon file status
+        if st.session_state.genetic_code:
+            st.info("Codon data loaded")
         else:
-            st.info(f"ℹ️ {default_codon_file} not found - this is expected on Streamlit Cloud")
-            st.write("App should continue without auto-loading")
+            st.warning("No codon data - this is expected for testing")
     
-    st.success("✅ Auto-loading logic completed successfully")
+    st.write("✅ Sidebar created")
     
-except Exception as e:
-    st.error(f"❌ Auto-loading logic failed: {e}")
-    st.write("This might be where your main app is hanging!")
+    st.write("7. Creating main tabs...")
+    # Main interface tabs
+    tab1, tab2, tab3 = st.tabs(["Single Sequence", "Batch Optimization", "About"])
+    
+    with tab1:
+        st.header("Single Sequence Optimization")
+        st.write("This tab would contain the single sequence optimization interface")
+        st.text_area("DNA Sequence", "ATGAAATAA", height=100)
+        if st.button("Test Button"):
+            st.success("Button works!")
+    
+    with tab2:
+        st.header("Batch Optimization")
+        st.write("This tab would contain batch processing")
+    
+    with tab3:
+        st.header("About")
+        st.write("This tab would contain the about information")
+    
+    st.write("✅ Tabs created")
+    
+    st.success("🎉 Main function completed successfully!")
 
-st.info("Codon file testing complete!")
-
-# Show session state
-st.subheader("Session State After Testing:")
-st.write(f"genetic_code entries: {len(st.session_state.genetic_code)}")
-st.write(f"codon_weights entries: {len(st.session_state.codon_weights)}")
-st.write(f"codon_data_loaded: {st.session_state.get('codon_data_loaded', 'Not set')}")
+if __name__ == "__main__":
+    main()
