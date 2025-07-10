@@ -1,95 +1,118 @@
 import streamlit as st
+import pandas as pd
 import os
-import requests
-from dotenv import load_dotenv
-from anthropic import Anthropic
-import time
+import io
+from collections import defaultdict
 
 # Configure page
 st.set_page_config(
-    page_title="API Engine Testing",
+    page_title="Codon File Testing",
     page_icon="🧬",
     layout="wide"
 )
 
-st.title("🧬 API Engine Testing")
+st.title("🧬 Codon File Loading Testing")
 
-# Load environment variables
-load_dotenv()
+# Initialize session state like your main app
+if 'genetic_code' not in st.session_state:
+    st.session_state.genetic_code = {}
+if 'codon_weights' not in st.session_state:
+    st.session_state.codon_weights = {}
+if 'preferred_codons' not in st.session_state:
+    st.session_state.preferred_codons = {}
+if 'human_codon_usage' not in st.session_state:
+    st.session_state.human_codon_usage = {}
+if 'aa_to_codons' not in st.session_state:
+    st.session_state.aa_to_codons = defaultdict(list)
 
-st.subheader("Testing PatentSearchEngine")
+st.subheader("Testing codon file loading function")
+
+@st.cache_data
+def load_codon_data_from_file(file_content):
+    """Load codon usage data from uploaded file"""
+    try:
+        df = pd.read_excel(io.BytesIO(file_content))
+        df.columns = df.columns.str.strip().str.lower().str.replace(" ", "_")
+        required_columns = ['triplet', 'amino_acid', 'fraction']
+        missing_columns = [col for col in required_columns if col not in df.columns]
+        if missing_columns:
+            raise ValueError(f"Missing required columns: {missing_columns}")
+        
+        df['triplet'] = df['triplet'].str.upper().str.strip()
+        df['amino_acid'] = df['amino_acid'].str.upper().str.strip().replace({'*': 'X'})
+        df = df.dropna(subset=['triplet', 'amino_acid', 'fraction'])
+        
+        genetic_code = df.set_index('triplet')['amino_acid'].to_dict()
+        max_fraction = df.groupby('amino_acid')['fraction'].transform('max')
+        df['weight'] = df['fraction'] / max_fraction
+        codon_weights = df.set_index('triplet')['weight'].to_dict()
+        preferred_codons = df.sort_values('fraction', ascending=False).drop_duplicates('amino_acid').set_index('amino_acid')['triplet'].to_dict()
+        human_codon_usage = df.set_index('triplet')['fraction'].to_dict()
+        
+        aa_to_codons = defaultdict(list)
+        for codon_val, freq in human_codon_usage.items():
+            aa = genetic_code.get(codon_val, None)
+            if aa and aa != 'X':
+                aa_to_codons[aa].append((codon_val, freq))
+        
+        return genetic_code, codon_weights, preferred_codons, human_codon_usage, aa_to_codons, df
+    except Exception as e:
+        raise Exception(f"Error loading codon file: {e}")
+
+# Test if the function works
+st.write("Testing codon loading function...")
 try:
-    class PatentSearchEngine:
-        def __init__(self):
-            self.serper_api_key = os.getenv('SERPER_API_KEY')
-            self.anthropic_api_key = os.getenv('ANTHROPIC_API')
-            self.anthropic = Anthropic(api_key=self.anthropic_api_key) if self.anthropic_api_key else None
+    # We can't test with the actual file since it might not exist
+    # But we can test if the function is defined properly
+    st.success("✅ load_codon_data_from_file function defined successfully")
+except Exception as e:
+    st.error(f"❌ Function definition failed: {e}")
+
+# Test the actual auto-loading logic from your main app
+st.subheader("Testing auto-loading logic")
+
+try:
+    # This is the exact code from your main app that might be hanging
+    if not st.session_state.genetic_code and 'codon_data_loaded' not in st.session_state:
+        default_codon_file = "HumanCodons.xlsx"
+        st.write(f"Looking for {default_codon_file}...")
+        
+        if os.path.exists(default_codon_file):
+            st.info(f"✅ Found {default_codon_file} - attempting to load...")
+            try:
+                with open(default_codon_file, 'rb') as f:
+                    file_content = f.read()
+                
+                st.write("File read successfully, parsing...")
+                genetic_code, codon_weights, preferred_codons, human_codon_usage, aa_to_codons, codon_df = load_codon_data_from_file(file_content)
+                
+                st.session_state.genetic_code = genetic_code
+                st.session_state.codon_weights = codon_weights
+                st.session_state.preferred_codons = preferred_codons
+                st.session_state.human_codon_usage = human_codon_usage
+                st.session_state.aa_to_codons = aa_to_codons
+                st.session_state.codon_data_loaded = True
+                st.session_state.codon_file_source = "Default (HumanCodons.xlsx)"
+                
+                st.success(f"✅ Auto-loaded {len(codon_df)} codon entries from HumanCodons.xlsx")
+                
+            except Exception as e:
+                st.warning(f"⚠️ Could not auto-load HumanCodons.xlsx: {e}")
+                st.write("This is OK - the app should continue anyway")
+        else:
+            st.info(f"ℹ️ {default_codon_file} not found - this is expected on Streamlit Cloud")
+            st.write("App should continue without auto-loading")
     
-    patent_engine = PatentSearchEngine()
-    st.success("✅ PatentSearchEngine created successfully")
-    st.write(f"SERPER API Key: {'Found' if patent_engine.serper_api_key else 'Not found'}")
-    st.write(f"Anthropic API Key: {'Found' if patent_engine.anthropic_api_key else 'Not found'}")
-except Exception as e:
-    st.error(f"❌ PatentSearchEngine failed: {e}")
-
-st.subheader("Testing NCBISearchEngine")
-try:
-    class NCBISearchEngine:
-        def __init__(self):
-            self.serper_api_key = os.getenv('SERPER_API_KEY')
-            self.base_url = "https://www.ncbi.nlm.nih.gov"
-            self.session = requests.Session()
-            self.session.headers.update({
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-            })
-            self.anthropic_api_key = os.getenv('ANTHROPIC_API')
-            self.anthropic = Anthropic(api_key=self.anthropic_api_key) if self.anthropic_api_key else None
+    st.success("✅ Auto-loading logic completed successfully")
     
-    ncbi_engine = NCBISearchEngine()
-    st.success("✅ NCBISearchEngine created successfully")
 except Exception as e:
-    st.error(f"❌ NCBISearchEngine failed: {e}")
+    st.error(f"❌ Auto-loading logic failed: {e}")
+    st.write("This might be where your main app is hanging!")
 
-st.subheader("Testing UniProtSearchEngine")
-try:
-    class UniProtSearchEngine:
-        def __init__(self):
-            self.base_url = "https://www.uniprot.org"
-            self.api_url = "https://rest.uniprot.org"
-            self.session = requests.Session()
-            self.session.headers.update({
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-            })
-            self.anthropic_api_key = os.getenv('ANTHROPIC_API')
-            self.anthropic = Anthropic(api_key=self.anthropic_api_key) if self.anthropic_api_key else None
-    
-    uniprot_engine = UniProtSearchEngine()
-    st.success("✅ UniProtSearchEngine created successfully")
-except Exception as e:
-    st.error(f"❌ UniProtSearchEngine failed: {e}")
+st.info("Codon file testing complete!")
 
-st.subheader("Testing putting engines in session state")
-try:
-    if 'test_patent_engine' not in st.session_state:
-        st.session_state.test_patent_engine = PatentSearchEngine()
-    if 'test_ncbi_engine' not in st.session_state:
-        st.session_state.test_ncbi_engine = NCBISearchEngine()
-    if 'test_uniprot_engine' not in st.session_state:
-        st.session_state.test_uniprot_engine = UniProtSearchEngine()
-    
-    st.success("✅ All engines stored in session state successfully")
-except Exception as e:
-    st.error(f"❌ Storing engines in session state failed: {e}")
-
-st.info("API Engine testing complete!")
-
-# Test a simple network request
-st.subheader("Testing Network Connection")
-try:
-    response = requests.get("https://httpbin.org/get", timeout=5)
-    if response.status_code == 200:
-        st.success("✅ Network connection working")
-    else:
-        st.warning(f"⚠️ Network response: {response.status_code}")
-except Exception as e:
-    st.error(f"❌ Network test failed: {e}")
+# Show session state
+st.subheader("Session State After Testing:")
+st.write(f"genetic_code entries: {len(st.session_state.genetic_code)}")
+st.write(f"codon_weights entries: {len(st.session_state.codon_weights)}")
+st.write(f"codon_data_loaded: {st.session_state.get('codon_data_loaded', 'Not set')}")
