@@ -3214,7 +3214,71 @@ def run_single_optimization(sequence, method, bias_weight=None):
     except Exception as e:
         return None, str(e)
 
+    
 def main():
+        
+    """Main Streamlit application"""
+    st.write("🚀 DEBUG: Main function started")
+
+    # Apply the selected theme CSS
+    st.write("🎨 DEBUG: Applying theme...")
+    inject_app_theme()
+    st.write("✅ DEBUG: Theme applied")
+
+    # Initialize research engines
+    st.write("🔬 DEBUG: Initializing engines...")
+    if 'patent_engine' not in st.session_state:
+        st.session_state.patent_engine = PatentSearchEngine()
+    if 'ncbi_engine' not in st.session_state:
+        st.session_state.ncbi_engine = NCBISearchEngine()
+    if 'uniprot_engine' not in st.session_state:
+        st.session_state.uniprot_engine = UniProtSearchEngine()
+    st.write("✅ DEBUG: Engines initialized")
+        
+    st.write("📝 DEBUG: Setting title...")
+    st.title("DNA Codon Optimization and Analysis Tool")
+    st.markdown("DNA sequence optimization and analysis")
+    st.write("✅ DEBUG: Title set")
+
+    st.write("📁 DEBUG: Creating sidebar...")
+    # Sidebar for settings and configuration
+    with st.sidebar:
+        st.write("🔧 DEBUG: Inside sidebar...")
+        st.header("Configuration")
+        
+        # Auto-load default codon file if available and not already loaded
+        st.write("📊 DEBUG: Checking codon file...")
+        if not st.session_state.genetic_code and 'codon_data_loaded' not in st.session_state:
+            # ... your existing codon loading code here ...
+            pass  # For now, just skip this to test
+        st.write("✅ DEBUG: Codon file check complete")
+        
+        # Display current codon file status
+        st.write("💾 DEBUG: Displaying codon status...")
+        if st.session_state.genetic_code:
+            codon_source = st.session_state.get('codon_file_source', 'Unknown')
+            st.info(f"**Codon Data Loaded:** {codon_source}")
+        st.write("✅ DEBUG: Codon status displayed")
+        
+        # Rest of sidebar...
+        st.write("⚙️ DEBUG: Creating sidebar controls...")
+        # Add more debug statements before each major sidebar section
+
+    st.write("✅ DEBUG: Sidebar complete")
+
+    st.write("📋 DEBUG: Creating tabs...")
+    # Main interface tabs
+    tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs(["Single Sequence", "Batch Optimization", "CDS Database Search", "Patent Search", "About", "mRNA Design", "Cancer Vaccine Design"])
+    st.write("✅ DEBUG: Tabs created")
+
+    st.write("🔀 DEBUG: Starting tab content...")
+    with tab1:
+        st.write("📝 DEBUG: Tab 1 content starting...")
+        st.header("Single Sequence Optimization")
+        # Add debug statements throughout your tab content
+        
+    
+    
     """Main Streamlit application"""
     # Apply the selected theme CSS
     inject_app_theme()
