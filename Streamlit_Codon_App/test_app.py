@@ -1,89 +1,92 @@
 import streamlit as st
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import plotly.graph_objects as go
+import plotly.express as px
+from plotly.subplots import make_subplots
+import os
+import json
+import logging
+from collections import defaultdict, Counter
+from Bio.Seq import Seq
+from openpyxl import load_workbook
+import io
+import tempfile
+import requests
+import time
+from bs4 import BeautifulSoup
+import re
+from urllib.parse import urljoin, urlparse, quote
+from dotenv import load_dotenv
+from typing import List, Dict, Set
+from anthropic import Anthropic
+from datetime import datetime
 
 # Configure page
 st.set_page_config(
-    page_title="DNA Codon Tool - Import Test",
-    page_icon="🧬",
-    layout="wide"
+    page_title="DNA Codon Optimization and Analysis Tool",
+    page_icon=":dna:",
+    layout="wide",
+    initial_sidebar_state="expanded"
 )
 
-st.title("🧬 Import Testing")
+st.title("🧬 Session State Testing")
 
-# Test imports one by one
+# Test session state initialization step by step
 try:
-    import pandas as pd
-    st.success("✅ pandas imported")
+    if 'config' not in st.session_state:
+        st.session_state.config = {
+            "codon_file_path": "HumanCodons.xlsx",
+            "bias_weight": 1,
+            "auto_open_files": True,
+            "default_output_dir": "."
+        }
+    st.success("✅ config initialized")
 except Exception as e:
-    st.error(f"❌ pandas failed: {e}")
+    st.error(f"❌ config failed: {e}")
 
 try:
-    import numpy as np
-    st.success("✅ numpy imported")
+    if 'active_theme' not in st.session_state:
+        st.session_state.active_theme = "Default"
+    st.success("✅ active_theme initialized")
 except Exception as e:
-    st.error(f"❌ numpy failed: {e}")
+    st.error(f"❌ active_theme failed: {e}")
 
 try:
-    import matplotlib.pyplot as plt
-    st.success("✅ matplotlib imported")
+    if 'accumulated_results' not in st.session_state:
+        st.session_state.accumulated_results = []
+    st.success("✅ accumulated_results initialized")
 except Exception as e:
-    st.error(f"❌ matplotlib failed: {e}")
+    st.error(f"❌ accumulated_results failed: {e}")
 
 try:
-    import plotly.graph_objects as go
-    import plotly.express as px
-    from plotly.subplots import make_subplots
-    st.success("✅ plotly imported")
+    if 'genetic_code' not in st.session_state:
+        st.session_state.genetic_code = {}
+    if 'codon_weights' not in st.session_state:
+        st.session_state.codon_weights = {}
+    if 'preferred_codons' not in st.session_state:
+        st.session_state.preferred_codons = {}
+    st.success("✅ codon dictionaries initialized")
 except Exception as e:
-    st.error(f"❌ plotly failed: {e}")
+    st.error(f"❌ codon dictionaries failed: {e}")
 
+# Test creating the API engines WITHOUT initializing them in session state yet
 try:
-    import os
-    import json
-    import logging
-    st.success("✅ standard libraries imported")
-except Exception as e:
-    st.error(f"❌ standard libraries failed: {e}")
-
-try:
-    from collections import defaultdict, Counter
-    st.success("✅ collections imported")
-except Exception as e:
-    st.error(f"❌ collections failed: {e}")
-
-try:
-    from Bio.Seq import Seq
-    st.success("✅ biopython imported")
-except Exception as e:
-    st.error(f"❌ biopython failed: {e}")
-
-try:
-    from openpyxl import load_workbook
-    st.success("✅ openpyxl imported")
-except Exception as e:
-    st.error(f"❌ openpyxl failed: {e}")
-
-try:
-    import requests
-    st.success("✅ requests imported")
-except Exception as e:
-    st.error(f"❌ requests failed: {e}")
-
-try:
-    from bs4 import BeautifulSoup
-    st.success("✅ beautifulsoup4 imported")
-except Exception as e:
-    st.error(f"❌ beautifulsoup4 failed: {e}")
-
-try:
-    from dotenv import load_dotenv
-    st.success("✅ python-dotenv imported")
-except Exception as e:
-    st.error(f"❌ python-dotenv failed: {e}")
-
-try:
+    # Just test if we can create the classes
+    st.write("Testing API engine creation...")
+    
+    # Test creating without storing in session state
     from anthropic import Anthropic
-    st.success("✅ anthropic imported")
+    test_anthropic = Anthropic(api_key="test") if "test" else None
+    st.success("✅ Can create Anthropic class")
+    
+    st.success("✅ API engines can be created")
 except Exception as e:
-    st.error(f"❌ anthropic failed: {e}")
+    st.error(f"❌ API engine creation failed: {e}")
 
-st.info("Import testing complete! Check which ones failed above.")
+st.info("Session state testing complete!")
+
+# Show what's in session state
+st.subheader("Current Session State:")
+st.write(dict(st.session_state))
